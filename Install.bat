@@ -12,7 +12,6 @@ if errorlevel 1 (
   exit /b 1
 )
 if exist "%REPO_DIR%\.git" (
-  for /f "delims=" %%U in ('git -C "%REPO_DIR%" remote get-url origin') do set "CURRENT_URL=%%U"
   call :check_origin
   if errorlevel 1 goto failed
   call :check_branch
@@ -38,14 +37,23 @@ pause
 exit /b 0
 
 :check_origin
-if "%CURRENT_URL%"=="%REPO_URL%" exit /b 0
+git -C "%REPO_DIR%" config --get remote.origin.url "^https://github[.]com/RomulusThirio/IdleOn-Travel[.]git$" >nul
+if not errorlevel 1 exit /b 0
 echo The cached repository belongs to a different URL. Rename "%REPO_DIR%" first.
 exit /b 1
 
 :check_branch
+set "BRANCH_FILE=%REPO_DIR%\.git\idleon-travel-branch.tmp"
+git -C "%REPO_DIR%" symbolic-ref --quiet --short HEAD > "%BRANCH_FILE%"
+if errorlevel 1 goto branch_failed
 set "CURRENT_BRANCH="
-for /f "delims=" %%B in ('git -C "%REPO_DIR%" branch --show-current') do set "CURRENT_BRANCH=%%B"
+set /p "CURRENT_BRANCH="<"%BRANCH_FILE%"
+del /q "%BRANCH_FILE%" >nul 2>nul
 if "%CURRENT_BRANCH%"=="main" exit /b 0
+echo The cached repository is not on main. Switch it to main before updating.
+exit /b 1
+:branch_failed
+del /q "%BRANCH_FILE%" >nul 2>nul
 echo The cached repository is not on main. Switch it to main before updating.
 exit /b 1
 
