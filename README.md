@@ -1,3 +1,8 @@
+# This is currently in it's testing phase and needs to be public! If you stumble across this and there's no releases yet, please wait for one to be there!
+## So far it works well and I promise it will be worth the wait. For now, the only thing this menu will have is a teleport to different world locations. If you would like to make suggestions, please do so and I will try to reply!
+
+
+
 # IdleOn Travel Menu
 
 ## Download just one file
