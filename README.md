@@ -1,43 +1,43 @@
 # IdleOn Travel Menu
 
-Windows Steam travel menu, with searchable towns, enemy maps, and skilling areas. Press **F8** in game. This repository contains only the custom menu and installer, not the game or account data.
+## Download just one file
 
-## Repository owner: one-time setup
+**[Download Install.bat](https://github.com/RomulusThirio/IdleOn-Travel/raw/refs/heads/main/Install.bat)**
 
-1. Create a public GitHub repository and upload these files at its root.
-2. Edit `REPO_URL` near the top of `Update-IdleOn.bat` to that repository's HTTPS clone URL, such as `https://github.com/your-name/idleon-travel.git`.
-3. Upload that edited launcher too. Send people **just `Update-IdleOn.bat`**.
+1. Install [Git for Windows](https://git-scm.com/download/win) once if it is not already installed. Node.js is not required.
+2. Close IdleOn and double-click `Install.bat`. You do not need to download the repository, `install.ps1`, or `menu.js`.
+3. The launcher downloads everything automatically, finds your Steam installation, backs up the game, and installs the travel menu.
+4. Start IdleOn normally and press **F8**.
 
-A public repository is easiest for recipients. Private repositories require each recipient to have GitHub access and Git authentication configured.
+Keep the same `Install.bat` and run it again for future updates. It clones `RomulusThirio/IdleOn-Travel` on first use and runs `git pull --ff-only origin main` afterward. The repository URL is already configured.
 
-## Recipient
+**This repository is private.** Recipients need repository access and GitHub authentication in Git (normally handled by Git Credential Manager included with Git for Windows). A downloaded launcher does not grant repository access. If Git reports “Repository not found,” check the signed-in account and repository permissions.
 
-1. Install [Git for Windows](https://git-scm.com/download/win) if needed. Node.js is not required.
-2. Close IdleOn. Double-click `Update-IdleOn.bat`.
-3. The launcher clones the repository on first run and uses `git pull --ff-only` on subsequent runs. The installer finds Steam libraries or asks for the game folder.
-4. Start IdleOn normally. Press F8.
+## Where files go
 
-Run the same launcher again whenever the repository receives a menu update or Steam replaces the patched game files. The launcher follows the repository's default branch. It stops on Git errors, conflicting edits, incompatible game code, or a running game; it does not reset local edits or force-close the game.
+The launcher can live anywhere. Downloaded files are cached at `%LOCALAPPDATA%\IdleOnTravel`. Steam libraries are detected automatically; if detection fails, the installer asks for the game folder. You may also drag the game installation folder onto `Install.bat`.
 
-You can also drag the IdleOn installation folder onto the launcher to select it explicitly. The downloaded source stays in `%LOCALAPPDATA%\IdleOnTravel`. The launcher itself can live anywhere.
+Only the original launcher needs to be downloaded manually. Git fetches the PowerShell installer, menu, and restore tool.
 
-## Updates and restore
+## Restore
 
-Edit and upload `menu.js` to distribute menu changes. The installer replaces this menu's previous injection rather than stacking copies. Backups are kept under `rom-travel-backups` in the game folder, with separate backups for changed game versions. Existing desktop patches can be upgraded: the recognized menu is removed before creating an unpatched backup.
+Run `Restore-IdleOn.bat` inside `%LOCALAPPDATA%\IdleOnTravel`. Backups are kept in `rom-travel-backups` in the game folder.
 
-Run `Restore-IdleOn.bat` from the downloaded repository to uninstall. Restore refuses to apply an old backup if Steam or another tool changed the archive after installation. Steam's **Verify integrity of game files** can restore the current official version in that case.
+Restore refuses to apply an old backup if the game archive has changed since installation. Steam's **Verify integrity of game files** restores current official files if needed.
 
-The update launcher executes installer code from the repository. Share only your configured launcher, and use a repository whose owner you trust.
+## Maintainer
+
+Commit changes to `menu.js` or `install.ps1` on `main`; recipients get them when they next run their existing `Install.bat`. Existing menu injections are replaced, not stacked. The launcher stops on Git errors, an unexpected origin/branch, incompatible game code, or a running game. It never resets local edits or force-closes the game.
+
+`Update-IdleOn.bat` remains available as an equivalent standalone launcher for compatibility. `Install.bat` is the file to share. Launcher changes themselves require redistributing the launcher; menu and PowerShell installer updates are fetched automatically.
 
 ## Current menu limitations
 
-- This packages menu 0.1.2 as currently installed; it does not fix the reported colosseum/enemy labeling issue yet.
-- Enemy labels come from AFK map targets, so special maps can show a surrounding area's enemy. Check the map name beneath the label.
+- Menu 0.1.2 is included. The reported colosseum/enemy labeling correction is still pending.
+- Enemy labels use AFK map targets; special areas can display a surrounding area's enemy. Check the map name beneath each label.
 - World/location numbers are menu numbers, not official map IDs.
-- Skill entries travel to a map but do not walk to resources or start gathering.
+- Skill entries travel to maps but do not walk to resources or start gathering.
 - Progression unlocks are not checked.
-- A future game update may require adapting the menu's internal game references even if the travel function still exists.
+- A game update may require adapting the internal game references.
 
-## Local installation without Git
-
-Download/extract the repository, then run `install.ps1` with Windows PowerShell, supplying `-GamePath` if desired. Git is only needed for the update launcher.
+The repository contains custom tools only, not game files or account data.

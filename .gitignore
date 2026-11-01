@@ -1,0 +1,6 @@
+*.asar
+*.tmp
+*.previous
+*.zip
+rom-travel-backups/
+.test-game/
