@@ -52,7 +52,7 @@ exit /b 1
 :failed
 echo.
 echo Update did not complete. Read the message above; close IdleOn before retrying.
-echo This repository is private. GitHub sign-in and repository access are required.
+echo For repository access errors, check your GitHub sign-in and permissions.
 echo No existing Git edits are discarded automatically.
 pause
 exit /b 1

@@ -1,7 +1,6 @@
-# This is currently in it's testing phase and needs to be public! If you stumble across this and there's no releases yet, please wait for one to be there!
-## So far it works well and I promise it will be worth the wait. For now, the only thing this menu will have is a teleport to different world locations. If you would like to make suggestions, please do so and I will try to reply!
+# Testing build
 
-
+Teleporting works; the new character assignments still need in-game testing. Please wait for a release if you want a stable build. Suggestions are welcome.
 
 # IdleOn Travel Menu
 
@@ -15,6 +14,16 @@
 4. Start IdleOn normally and press **F8**.
 
 Keep the same `Install.bat` and run it again for future updates. It clones `RomulusThirio/IdleOn-Travel` on first use and runs `git pull --ff-only origin main` afterward. The repository URL is already configured.
+
+## Assign an activity
+
+Select **Assign activity and return**, choose a character, and click a mining, fishing, chopping, or catching destination. Choose the resource and click **Start assignment**.
+
+The menu switches characters, waits 5 seconds, claims AFK gains using the native cache action, collects remaining drops, and waits at least 2 more seconds before traveling. After arrival it waits 1 second, moves to the resource, and checks that gathering stays active for 1.5 seconds before saving and switching back. Returning AFK gains are handled too. Cache deposits follow the game's unlock and storage rules.
+
+One assignment runs at a time. Collect drops on your starting character first. Full bags, missing resources, interrupted gathering, or timeouts stop the assignment on the current character. **Cancel** stops further actions; a switch or transition already in progress will finish. Check the character and its loot before retrying.
+
+Assignment timing, loot checks, movement and UI controls are covered by automated tests. Live character assignment still needs in-game verification.
 
 **This repository is private.** Recipients need repository access and GitHub authentication in Git (normally handled by Git Credential Manager included with Git for Windows). A downloaded launcher does not grant repository access. If Git reports “Repository not found,” check the signed-in account and repository permissions.
 
@@ -36,12 +45,14 @@ Commit changes to `menu.js` or `install.ps1` on `main`; recipients get them when
 
 `Update-IdleOn.bat` remains available as an equivalent standalone launcher for compatibility. `Install.bat` is the file to share. Launcher changes themselves require redistributing the launcher; menu and PowerShell installer updates are fetched automatically.
 
+Run the assignment tests with `node --test tests/assignment.test.cjs`.
+
 ## Current menu limitations
 
-- Menu 0.1.2 is included. The reported colosseum/enemy labeling correction is still pending.
+- Menu 0.2.0 is included. The reported colosseum/enemy labeling correction is still pending.
 - Enemy labels use AFK map targets; special areas can display a surrounding area's enemy. Check the map name beneath each label.
 - World/location numbers are menu numbers, not official map IDs.
-- Skill entries travel to maps but do not walk to resources or start gathering.
+- Travel mode only changes maps. Assignment mode starts gathering for mining, fishing, chopping, and catching; other skills remain travel-only.
 - Progression unlocks are not checked.
 - A game update may require adapting the internal game references.
 
