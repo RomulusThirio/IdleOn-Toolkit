@@ -1,22 +1,84 @@
 /* Injected inside the installed game's closure; uses its own map data. */
 (() => {
   if (window.__romNavigation) return;
-  window.__romNavigation = { version: '0.2.1' };
+  window.__romNavigation = { version: '0.2.2' };
   let pending = null;
   const clean = value => String(value == null ? '' : value).replace(/_/g, ' ');
   const get = key => a.engine && a.engine.getGameAttribute(key);
+  function availableMaps(name = String((get('UserInfo') || [])[0] || '')) {
+    const current=String((get('UserInfo') || [])[0] || ''), active=name===current;
+    const saved=active ? null : get('PlayerDATABASE')?.h?.[name]?.h;
+    const read=key=>active ? get(key) : saved?.[key];
+    const lists=get('CustomLists')?.h, kills=read('KillsLeft2Advance');
+    const unlocked=new Set();
+    if (!lists || !Array.isArray(kills) || !Array.isArray(lists.SceneTransitions)) return unlocked;
+    const quests=read('QuestComplete')?.h || {}, options=get('OptionsListAccount') || [];
+    const number=value=>value===null || value===undefined || value==='' ? NaN : Number(value);
+    const cleared=(table,map,slot)=>Number.isFinite(number(table?.[map]?.[slot])) && number(table[map][slot])<1;
+    const native=active && typeof m!=='undefined' && typeof m._customBlock_Windwalker==='function';
+    const special=native && (m._customBlock_Windwalker('CompassTempest',0,0)===1 || m._customBlock_ArcaneType('TesseractArcanist',0,0)===1);
+    // Normal kill counts cannot prove access during an inactive character's challenge run.
+    if (!active && (read('BuffsActive') || []).some(buff=>[420,585].includes(Number(buff[0])) && Number(buff[1])>100)) return unlocked;
+    const portalOpen=(map,slot)=>{
+      try { return native ? m._customBlock_Windwalker('CanWeEnterPortal',map,slot)===1 : cleared(kills,map,slot); }
+      catch (_) { return false; }
+    };
+    let worlds=1;
+    for (let world=0;world<6;world++) if(portalOpen(world*50,0)) worlds=world+2;
+    const add=map=>{
+      if (Math.floor(map/50)>=worlds || !lists.MapName?.[map]) return;
+      if (map>150 && Number(quests.Gobo5)!==1 || map>250 && Number(quests.Lafu_Shi6)!==1) return;
+      unlocked.add(map);
+    };
+    [0,6].forEach(add);
+    if (worlds>1) [50,51,54].forEach(add);
+    if (worlds>2) [100,101,102].forEach(add);
+    for (let world=3;world<worlds;world++) add(world*50);
+    const first=(get('GetPlayersUsernames') || [])[0];
+    const firstLevels=first===current ? get('Lv0') : get('PlayerDATABASE')?.h?.[first]?.h?.Lv0;
+    if (Number(firstLevels?.[0])>16) add(41);
+    if (!special) {
+      if (Number(options[265])===1) add(42);
+      if (Number(options[266])===1) add(73);
+      if (Number(get('Dream')?.[2])>=1) add(120);
+      if (Number(quests.Rift_Ripper1)===1) add(166);
+      if (Number(get('Holes')?.[1]?.[0])>=1) add(216);
+    }
+    const regionReq=get('CustomMaps')?.h?.MapMulticharReq?.h || {};
+    const regionCleared=source=>{
+      const required=number(regionReq[String(source)]);
+      if (!Number.isFinite(required)) return true;
+      const count=(get('GetPlayersUsernames') || []).filter(owner=>{
+        const table=owner===current ? get('KillsLeft2Advance') : get('PlayerDATABASE')?.h?.[owner]?.h?.KillsLeft2Advance;
+        return cleared(table,source,0);
+      }).length;
+      return count>=required;
+    };
+    lists.SceneTransitions.forEach((portals,source)=>{
+      if (!Array.isArray(portals) || Math.floor(source/50)>=worlds) return;
+      portals.slice(1).forEach((portal,slot)=>{
+        const destination=lists.MapName.indexOf(portal[1]);
+        if (destination<0 || Math.floor(destination/50)!==Math.floor(source/50)) return;
+        if (portalOpen(source,slot) && (slot!==0 || regionCleared(source))) add(destination);
+      });
+    });
+    if (portalOpen(14,1)) add(17);
+    if (unlocked.has(15)) add(8);
+    return unlocked;
+  }
   function createAssignment(adapter, clock = () => Date.now()) {
     let job = null;
     const stallTimeout = 10000;
     const change = (phase, message) => {
       job.phase = phase; job.issued = false;
       job.lastProgress = clock(); job.progress = undefined;
-      if (phase==='afk') job.afkClaimed=false;
+      if (phase==='afk') { job.afkClaimed=false; job.afkSeen=false; job.lootReadyAt=null; }
       adapter.report(message);
     };
     const stop = message => { job = null; adapter.report(message); };
     function claimAndWait() {
       if (adapter.afkOpen()) {
+        job.afkSeen=true;
         adapter.claimAfk();
         job.afkClaimed=true;
         change('loot', 'Claiming AFK loot and collecting drops…');
@@ -50,15 +112,22 @@
             }
             if (adapter.character() === expected && adapter.loaded()) change('afk', 'Checking AFK gains for '+expected+'…');
           } else if (job.phase === 'afk') {
+            if (adapter.afkOpen() || adapter.afkMenuSeen?.()) job.afkSeen=true;
             if (adapter.loaded() && adapter.afkReady()) claimAndWait();
           } else if (job.phase === 'loot') {
             if (adapter.afkOpen()) {
+              job.afkSeen=true; job.lootReadyAt=null;
               if (!job.afkClaimed) {
                 adapter.claimAfk(); job.afkClaimed=true;
                 adapter.report('Claiming AFK loot and collecting drops…');
               }
               return;
             }
+            if (job.afkSeen && job.lootReadyAt===null) {
+              job.lootReadyAt=clock()+2000;
+              adapter.report('AFK menu closed. Waiting 2 seconds for drops to land…');
+            }
+            if (job.lootReadyAt!==null && clock()<job.lootReadyAt) return;
             if (!adapter.canAct()) return;
             adapter.collectDrops();
             if (adapter.dropCount() > 0) return;
@@ -109,19 +178,20 @@
     const drops = () => actors(44).map(actor=>behavior(actor,'ActorEvents_44')).filter(drop=>drop && Number(drop._CollectedStatus)!==1 && Number(drop._DropAmount)>0);
     const loaded = () => !!(playerBehavior() && Array.isArray(get('MapMonstersList')) && !c.isTransitioning() && c.getCurrentSceneName()!=='PlayerSelect');
     const canAct = () => loaded() && !afk() && Number((get('OptionsList') || [])[18])===0 && Number(get('BlockMovement'))===0;
-    let awaitingAfk = null;
+    let awaitingAfk = null, lastAfkMenu = false;
     const nativeAfkGains = q._customBlock_AFKgains;
     if (typeof nativeAfkGains === 'function') {
       q._customBlock_AFKgains = function(...args) {
         const owner=character();
         const result=nativeAfkGains.apply(this,args);
-        if (awaitingAfk===owner && character()===owner) awaitingAfk=null;
+        if (awaitingAfk===owner && character()===owner) { lastAfkMenu=!!afk(); awaitingAfk=null; }
         return result;
       };
     }
     return {
       report, character, loaded, canAct,
       afkReady:()=>awaitingAfk===null,
+      afkMenuSeen:()=>lastAfkMenu,
       progress(phase) {
         if (phase==='switch' || phase==='travel') return JSON.stringify([character(),get('CurrentMap'),loaded()]);
         if (phase==='afk' || phase==='arrival') return JSON.stringify([loaded(),awaitingAfk,!!afk(),canAct()]);
@@ -139,6 +209,7 @@
         if (!canAct()) throw new Error('Finish loading and close game dialogs before assigning an activity.');
         if (drops().length) throw new Error('Collect ground drops on the current character first.');
         if (!(get('GetPlayersUsernames') || []).includes(spec.character)) throw new Error('That character is not on this account.');
+        if (!availableMaps(spec.character).has(spec.map)) throw new Error('That destination is locked for '+spec.character+'.');
         const def=get('MonsterDefinitionsGET')?.h?.[spec.resource]?.h;
         if (!def || !['MINING','FISHING','CHOPPIN','CHOPPING','CATCHING'].includes(def.AFKtype)) throw new Error('Choose a mining, fishing, chopping, or catching resource.');
         const lists=get('CustomLists')?.h;
@@ -148,6 +219,7 @@
         for (const [name, fn] of [['AFK gains',nativeAfkGains],['character switch',u.playButton],['cloud save',v._customBlock_CloudSAVE],['local save',k._customBlock_SaveGamee],['travel',q._customBlock_Teleport],['network movement',v._customBlock_NetworkMove]]) {
           if (typeof fn!=='function') throw new Error('The game no longer exposes '+name+'.');
         }
+        lastAfkMenu=false;
       },
       switchCharacter(name) {
         if (!canAct() || drops().length) throw new Error('The character is not ready to switch, or loot remains on the ground.');
@@ -161,7 +233,7 @@
         a.engine.setGameAttribute('CloudsaveTimer',Number(get('CloudsaveTimer'))+2);
         k._customBlock_SaveGamee();
         get('OptionsList')[15]=index;
-        awaitingAfk=name;
+        awaitingAfk=name; lastAfkMenu=false;
         try {
           u.playButton(name);
           get('FamilyValuesMap').h.SwapPlayerStatus='Swap';
@@ -184,9 +256,13 @@
         }
       },
       dropCount:()=>drops().length,
-      travel:map=>q._customBlock_Teleport(map),
+      travel(map) {
+        if (!availableMaps().has(map)) throw new Error('That destination is locked for the active character.');
+        q._customBlock_Teleport(map);
+      },
       beginActivity(resource) {
         if (!canAct()) return false;
+        if (!availableMaps().has(Number(get('CurrentMap')))) throw new Error('This map is locked for the active character.');
         const origin=player();
         const distance=actor=>{
           const mob=behavior(actor,'ActorEvents_1');
@@ -230,10 +306,10 @@
     root.innerHTML = `<style>
       *{box-sizing:border-box}button,input,select{font:inherit}button{cursor:pointer;background:#25446b;color:white;border:1px solid #53749a;border-radius:7px;padding:8px}button:disabled{opacity:.45;cursor:default}
       #panel{width:345px;max-height:85vh;background:#111d2e;color:#eaf2ff;border:1px solid #53749a;border-radius:12px;padding:14px;box-shadow:0 8px 30px #0009}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}h2{font-size:18px;margin:0}input,select{width:100%;background:#0a1422;color:#fff;border:1px solid #4c6482;border-radius:6px;padding:9px;margin-bottom:9px}#rows{overflow:auto;max-height:45vh}.row{display:block;text-align:left;width:100%;margin:5px 0}.row small{display:block;margin-top:4px;color:#bdd0e6}#status{line-height:1.4;margin:10px 0;color:#bdcfe4;font-size:12px}footer{font-size:11px;color:#91a7c0;margin-top:9px}#cancel{width:100%}[hidden]{display:none!important}
-      </style><button id="open">Travel menu · F8</button><section id="panel" hidden><header><h2>Travel menu</h2><button id="close" aria-label="Close">×</button></header><select id="mode" aria-label="Travel or assign activity"><option value="travel">Travel</option><option value="assign">Assign activity and return</option></select><select id="character" aria-label="Character" hidden></select><input id="search" placeholder="Search destinations or codes…" aria-label="Search destinations or codes"><select id="world" aria-label="World"><option value="">All worlds</option>${[1,2,3,4,5,6,7].map(w=>`<option value="${w}">World ${w}</option>`).join('')}</select><div id="assignment-choice" hidden><div id="chosen"></div><select id="resource" aria-label="Resource"></select><button id="start-assignment">Start assignment</button></div><div id="rows"></div><div id="status">Waiting for your character…</div><button id="cancel" hidden>Cancel</button><footer>Uses the game's teleport routine. Special enemies without a mapped destination are listed as unavailable.</footer></section>`;
+      </style><button id="open">Travel menu · F8</button><section id="panel" hidden><header><h2>Travel menu</h2><button id="close" aria-label="Close">×</button></header><select id="mode" aria-label="Travel or assign activity"><option value="travel">Travel</option><option value="assign">Assign activity and return</option></select><select id="character" aria-label="Character" hidden></select><input id="search" placeholder="Search destinations or codes…" aria-label="Search destinations or codes"><select id="world" aria-label="World"><option value="">All worlds</option>${[1,2,3,4,5,6,7].map(w=>`<option value="${w}">World ${w}</option>`).join('')}</select><div id="assignment-choice" hidden><div id="chosen"></div><select id="resource" aria-label="Resource"></select><button id="start-assignment">Start assignment</button></div><div id="rows"></div><div id="status">Waiting for your character…</div><button id="cancel" hidden>Cancel</button><footer>Only destinations unlocked for the selected character are shown.</footer></section>`;
     const el = id => root.getElementById(id);
     const status = message => { el('status').textContent = message; };
-    let taskMessage = '', selectedRow = null;
+    let taskMessage = '', selectedRow = null, displayedOwner = '';
     const assignment = createAssignment(gameAdapter(message => { taskMessage=message; status(message); }));
     window.__romNavigation.assignment=assignment;
     function refreshCharacters() {
@@ -256,6 +332,7 @@
       el('character').hidden=el('mode').value!=='assign';
       el('assignment-choice').hidden=true; selectedRow=null; render();
     };
+    el('character').onchange=()=>{selectedRow=null;el('assignment-choice').hidden=true;render();};
     el('start-assignment').onclick=()=>{
       if (!selectedRow || pending || assignment.current) return;
       const resource=el('resource').value;
@@ -338,7 +415,10 @@
         ['mode','character','search','world','resource','start-assignment'].forEach(id=>{el(id).disabled=busy;});
         el('cancel').hidden=!busy;
         const all=entries(), query=el('search').value.trim().toLowerCase(), world=Number(el('world').value);
-        const rows=all.filter(row=>(el('mode').value!=='assign' || row.kind==='skill' && ['M','F','C','B'].includes(row.prefix)) && (!world || row.world===world) && `${row.code} ${row.name} ${row.id} ${row.location} ${row.resources || ''}`.toLowerCase().includes(query));
+        const owner=el('mode').value==='assign' ? el('character').value : String((get('UserInfo') || [])[0] || '');
+        displayedOwner=owner;
+        const unlocked=availableMaps(owner);
+        const rows=all.filter(row=>unlocked.has(row.map) && (el('mode').value!=='assign' || row.kind==='skill' && ['M','F','C','B'].includes(row.prefix)) && (!world || row.world===world) && `${row.code} ${row.name} ${row.id} ${row.location} ${row.resources || ''}`.toLowerCase().includes(query));
         el('rows').replaceChildren();
         rows.forEach(row=>{
           const button=document.createElement('button');button.className='row';button.disabled=row.map===null || !ready() || busy;
@@ -350,6 +430,7 @@
     }
     function travel(row) {
       if(pending || assignment.current || !ready())return;
+      if(!availableMaps().has(row.map)){render();status('That destination is locked for this character.');return;}
       if(Number(get('CurrentMap'))===row.map){status('You are already on this map.');return;}
       pending={row,started:Date.now(),issued:false};el('cancel').hidden=false;render();status('Preparing travel to '+row.name+'…');
     }
@@ -366,9 +447,9 @@
         if(pending){
           const job=pending;
           if(Date.now()-job.started>=10000){pending=null;el('cancel').hidden=true;render();status('Travel timed out after 10 seconds. Check the game before retrying.');return;}
-          if(!job.issued && ready() && !c.isTransitioning()) {job.issued=true;q._customBlock_Teleport(job.row.map);status('Traveling to '+job.row.name+'…');}
+          if(!job.issued && ready() && !c.isTransitioning()) {if(!availableMaps().has(job.row.map))throw new Error('That destination is locked for this character.');job.issued=true;q._customBlock_Teleport(job.row.map);status('Traveling to '+job.row.name+'…');}
           else if(job.issued && !c.isTransitioning() && Number(get('CurrentMap'))===job.row.map){pending=null;el('cancel').hidden=true;render();status('Arrived at '+job.row.location+'.');}
-        } else if(!el('panel').hidden && (!el('rows').children.length || ready() !== previousReady)) render();
+        } else if(!el('panel').hidden && (!el('rows').children.length || ready() !== previousReady || displayedOwner!==(el('mode').value==='assign' ? el('character').value : String((get('UserInfo') || [])[0] || '')))) render();
         previousReady = ready();
       }catch(error){pending=null;el('cancel').hidden=true;render();status('Travel stopped: '+error.message);}
     },250);

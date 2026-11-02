@@ -5,6 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'menu.js'), 'utf8');
+const accessSource = source.slice(source.indexOf('function availableMaps('), source.indexOf('function createAssignment('));
 const controllerSource = source.slice(source.indexOf('function createAssignment('), source.indexOf('function gameAdapter('));
 const createAssignment = vm.runInNewContext(controllerSource + '; createAssignment');
 const spec = {character:'Miner', map:6, resource:'Copper', resourceName:'Copper', location:'Tunnels Entrance'};
@@ -15,7 +16,7 @@ function fixture() {
   const calls=[],messages=[];
   const adapter={
     report:message=>messages.push(message),character:()=>state.character,map:()=>state.map,loaded:()=>state.loaded,
-    afkReady:()=>state.afkReady,canAct:()=>state.loaded && state.canAct && !state.popup,
+    afkReady:()=>state.afkReady,afkMenuSeen:()=>!!state.menuSeen,canAct:()=>state.loaded && state.canAct && !state.popup,
     canSwitch:()=>state.loaded && state.canAct && !state.popup,
     preflight:()=>{if(state.drops)throw Error('Collect ground drops first.');},
     switchCharacter:name=>{calls.push(['switch',name]);state.loaded=false;state.afkReady=false;},
@@ -31,13 +32,13 @@ function fixture() {
   const tick=ms=>{now+=ms || 0;controller.tick();};
   const enterTarget=()=>{controller.start(spec);tick();state.character='Miner';state.loaded=true;state.afkReady=true;state.popup=true;tick();};
   const reachActivity=()=>{
-    enterTarget();tick();tick();tick();state.map=6;state.loaded=true;tick();tick();tick();
+    enterTarget();tick();tick();tick(2000);tick();state.map=6;state.loaded=true;tick();tick();tick();
     assert.equal(controller.current.phase,'activity');
   };
   return {state,calls,messages,controller,tick,enterTarget,reachActivity};
 }
 
-test('readiness checks complete an assignment without advancing the clock',()=>{
+test('readiness checks advance immediately except for the AFK drop settling pause',()=>{
   const f=fixture();f.reachActivity();
   assert.equal(f.calls.filter(c=>c[0]==='claim').length,1);
   assert.equal(f.calls.filter(c=>c[0]==='travel').length,1);
@@ -110,7 +111,48 @@ test('returning character AFK gains and drops are handled before completion',()=
   f.state.character='Main';f.state.loaded=true;f.state.popup=true;f.tick();f.tick();
   assert.equal(f.calls.filter(c=>c[0]==='claim').length,1);
   f.state.afkReady=true;f.tick();assert.equal(f.calls.filter(c=>c[0]==='claim').length,2);
-  f.tick();assert.equal(f.controller.current,null);
+  f.tick();f.tick(2000);assert.equal(f.controller.current,null);
+});
+
+test('no loot check runs before two seconds after the AFK menu closes',()=>{
+  const f=fixture();f.enterTarget();f.tick();f.tick();
+  const collects=()=>f.calls.filter(c=>c[0]==='collect').length;
+  assert.equal(collects(),0);f.tick(1999);assert.equal(collects(),0);
+  assert.equal(f.calls.filter(c=>c[0]==='travel').length,0);
+  f.tick(1);assert.equal(collects(),1);assert.equal(f.controller.current.phase,'travel');
+});
+
+test('the pause begins after closure rather than when claim is clicked',()=>{
+  const f=fixture();f.enterTarget();f.tick();f.state.popup=true;f.tick(5000);
+  f.state.popup=false;f.tick();f.tick(1999);
+  assert.equal(f.calls.filter(c=>c[0]==='collect').length,0);
+  f.tick(1);assert.equal(f.calls.filter(c=>c[0]==='collect').length,1);
+});
+
+test('drops appearing during the pause are collected before travel',()=>{
+  const f=fixture();f.enterTarget();f.tick();f.state.drops=0;f.tick();
+  f.tick(1000);f.state.drops=4;f.tick(999);
+  assert.equal(f.state.drops,4);f.tick(1);assert.equal(f.state.drops,0);
+  assert.equal(f.controller.current.phase,'travel');
+});
+
+test('a reopened menu restarts the settling pause without claiming twice',()=>{
+  const f=fixture();f.enterTarget();f.tick();f.tick();f.tick(1500);
+  f.state.popup=true;f.tick();f.state.popup=false;f.tick();f.tick(1999);
+  assert.equal(f.calls.filter(c=>c[0]==='collect').length,0);
+  f.tick(1);assert.equal(f.calls.filter(c=>c[0]==='collect').length,1);
+  assert.equal(f.calls.filter(c=>c[0]==='claim').length,1);
+});
+
+test('no popup means no additional settling pause',()=>{
+  const f=fixture();f.enterTarget();f.state.popup=false;f.tick();f.tick();
+  assert.equal(f.controller.current.phase,'travel');
+});
+
+test('an automatically closed AFK menu still gets the settling pause',()=>{
+  const f=fixture();f.enterTarget();f.state.popup=false;f.state.menuSeen=true;f.tick();f.tick();
+  f.tick(1999);assert.equal(f.calls.filter(c=>c[0]==='collect').length,0);
+  f.tick(1);assert.equal(f.controller.current.phase,'travel');
 });
 
 test('gathering stopping before the return leaves the character in place',()=>{
@@ -128,7 +170,9 @@ function gameFixture() {
   const attrs={UserInfo:['Main'],OtherPlayers:{h:{Main:player}},MapMonstersList:[target],
     OptionsList:Array(19).fill(0),BlockMovement:0,GetPlayersUsernames:['Main','Miner'],
     MonsterDefinitionsGET:{h:{Copper:{h:{AFKtype:'MINING'}}}},
-    CustomLists:{h:{MapName:{6:'MininggA'},MapAFKtarget:{6:'Copper'},MapAFKtargetSide:{6:[]}}},
+    CustomLists:{h:{MapName:{6:'MininggA'},SceneTransitions:[],MapAFKtarget:{6:'Copper'},MapAFKtargetSide:{6:[]}}},
+    KillsLeft2Advance:[[1,0]],QuestComplete:{h:{}},
+    PlayerDATABASE:{h:{Miner:{h:{KillsLeft2Advance:[[1,0]],QuestComplete:{h:{}}}}}},
     PlayerMoveMaps:[{h:{Main:1}},{h:{}},{h:{}}],MonsterAlive:[0,1],AFKtarget:'Copper',CurrentMap:6,
     CloudsaveTimer:0,FamilyValuesMap:{h:{}}};
   const context={get:key=>attrs[key],
@@ -141,6 +185,7 @@ function gameFixture() {
     q:{_customBlock_AFKgains:()=> 'native gains result',_customBlock_Teleport:map=>calls.push(['travel',map])},u:{playButton:name=>calls.push(['play',name])},
     Xa:{get:()=>({scenes:{h:{19:{getID:()=>19}}}})}};
   const adapter=vm.runInNewContext(adapterSource+';gameAdapter(()=>{})',context);
+  context.availableMaps=vm.runInNewContext(accessSource+';availableMaps',context);
   return {adapter,attrs,calls,popups,ground,actor,playerState,target,targetState,context};
 }
 
@@ -178,6 +223,19 @@ test('a missing resource never starts gathering',()=>{
   const f=gameFixture();assert.equal(f.adapter.beginActivity('Iron'),false);assert.equal(f.calls.length,0);
 });
 
+test('locked assignments and stale travel requests are rejected before teleporting',()=>{
+  const f=gameFixture(),lists=f.attrs.CustomLists.h;
+  lists.MapName=[];lists.MapName[6]='MininggA';lists.MapName[7]='MininggB';
+  lists.SceneTransitions[6]=[[5,'Town'],[3,'MininggB']];
+  lists.MapAFKtarget[7]='Copper';lists.MapAFKtargetSide[7]=[];
+  f.attrs.KillsLeft2Advance[6]=[10];f.attrs.PlayerDATABASE.h.Miner.h.KillsLeft2Advance[6]=[10];
+  assert.throws(()=>f.adapter.preflight({...spec,map:7}),/locked/);
+  f.attrs.PlayerDATABASE.h.Miner.h.KillsLeft2Advance[6]=[0];
+  f.adapter.preflight({...spec,map:7});
+  f.attrs.UserInfo[0]='Miner';f.attrs.OtherPlayers.h.Miner=f.attrs.OtherPlayers.h.Main;
+  assert.throws(()=>f.adapter.travel(7),/locked/);assert.equal(f.calls.length,0);
+});
+
 test('nearest matching resource wins even when the first resource is upper left',()=>{
   const f=gameFixture();
   const farState={...f.targetState,_MonsterID:1,_Monster0ffsetX:0};
@@ -204,6 +262,13 @@ test('AFK readiness requires the selected character native gains callback',()=>{
   assert.equal(f.adapter.afkReady(),true);
 });
 
+test('native AFK processing remembers a popup that closes automatically',()=>{
+  const f=gameFixture();f.adapter.switchCharacter('Miner');f.attrs.UserInfo[0]='Miner';
+  f.popups.push(f.actor('ActorEvents_203',{}));f.context.q._customBlock_AFKgains('MINING',[]);
+  f.popups.length=0;assert.equal(f.adapter.afkMenuSeen(),true);
+  f.attrs.UserInfo[0]='Main';f.adapter.preflight(spec);assert.equal(f.adapter.afkMenuSeen(),false);
+});
+
 test('progress reflects movement and partial loot pickup',()=>{
   const f=gameFixture();const before=f.adapter.progress('activity');
   f.attrs.OtherPlayers.h.Main.getX=()=>110;assert.notEqual(f.adapter.progress('activity'),before);
@@ -222,8 +287,12 @@ test('menu assignment controls select a character, destination and resource',()=
       attachShadow(){return {set innerHTML(html){for(const match of html.matchAll(/id="([^"]+)"/g))elements[match[1]]=element();},getElementById:id=>elements[id]};}
     };
   }
-  const lists={MapName:[],MapAFKtarget:[],MapAFKtargetSide:[],MapDispName:[]};
+  const lists={MapName:[],SceneTransitions:[],MapAFKtarget:[],MapAFKtargetSide:[],MapDispName:[]};
   lists.MapName[6]='MininggA';lists.MapAFKtarget[6]='Copper';lists.MapAFKtargetSide[6]=[];lists.MapDispName[6]='Tunnels_Entrance';
+  lists.MapName[7]='MininggB';lists.MapAFKtarget[7]='Iron';lists.MapAFKtargetSide[7]=[];lists.MapDispName[7]='Freefall_Caverns';
+  lists.SceneTransitions[6]=[[5,'Town'],[3,'MininggB']];
+  f.attrs.MonsterDefinitionsGET.h.Iron={h:{AFKtype:'MINING',Name:'Iron'}};
+  f.attrs.KillsLeft2Advance[6]=[10];f.attrs.PlayerDATABASE.h.Miner.h.KillsLeft2Advance[6]=[0];
   f.attrs.CustomLists.h=lists;f.attrs.QuestComplete={};f.attrs.PixelHelperActor=[];
   f.context.window={addEventListener(){}};
   f.context.document={body:element(),createElement:element};
@@ -231,7 +300,9 @@ test('menu assignment controls select a character, destination and resource',()=
   vm.runInNewContext(source,f.context);timers.shift()();
   elements.mode.value='assign';elements.mode.onchange();
   assert.equal(elements.rows.children.length,1);
-  elements.character.value='Miner';elements.rows.children[0].onclick();
+  elements.character.value='Miner';elements.character.onchange();
+  assert.equal(elements.rows.children.length,2);
+  elements.rows.children[0].onclick();
   assert.equal(elements.resource.value,'Copper');assert.equal(elements['assignment-choice'].hidden,false);
   elements['start-assignment'].onclick();
   const job=f.context.window.__romNavigation.assignment.current;

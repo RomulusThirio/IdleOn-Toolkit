@@ -19,11 +19,13 @@ Keep the same `Install.bat` and run it again for future updates. It clones `Romu
 
 Select **Assign activity and return**, choose a character, and click a mining, fishing, chopping, or catching destination. Choose the resource and click **Start assignment**.
 
-The menu switches characters, checks that native AFK processing has finished, claims gains using the cache action, and collects remaining drops before traveling. Once the map is ready, it selects the nearest matching resource and checks that gathering has started before saving and switching back. Returning AFK gains are handled too. Each step advances on game state, without added wait timers. Cache deposits follow the game's unlock and storage rules.
+The menu switches characters, checks that native AFK processing has finished, claims gains using the cache action, and collects remaining drops before traveling. Once the map is ready, it selects the nearest matching resource and checks that gathering has started before saving and switching back. Returning AFK gains are handled too. After an AFK menu closes, the menu waits 2 seconds for drops to land before checking loot. Other steps advance on game state. Cache deposits follow the game's unlock and storage rules.
 
 One assignment runs at a time. Collect drops on your starting character first. An assignment stops with an error after 10 seconds without progress. Moving toward a resource or collecting loot resets that timer. Full bags, missing resources, and interrupted gathering also stop the assignment on the current character. **Cancel** stops further actions; a switch or transition already in progress will finish. Check the character and its loot before retrying.
 
-Assignment checks, loot handling, nearest-resource selection, and UI controls are covered by automated tests.
+Only unlocked destinations are shown. Travel uses the active character's progress; assignments use the selected character's saved progress and check access again before traveling. Destination codes stay fixed when locked maps are hidden.
+
+Assignment checks, loot handling, map access, nearest-resource selection, and UI controls are covered by automated tests.
 
 **This repository is private.** Recipients need repository access and GitHub authentication in Git (normally handled by Git Credential Manager included with Git for Windows). A downloaded launcher does not grant repository access. If Git reports “Repository not found,” check the signed-in account and repository permissions.
 
@@ -45,15 +47,15 @@ Commit changes to `menu.js` or `install.ps1` on `main`; recipients get them when
 
 `Update-IdleOn.bat` remains available as an equivalent standalone launcher for compatibility. `Install.bat` is the file to share. Launcher changes themselves require redistributing the launcher; menu and PowerShell installer updates are fetched automatically.
 
-Run the assignment tests with `node --test tests/assignment.test.cjs`.
+Run the assignment tests with `node --test tests/assignment.test.cjs tests/maps.test.cjs`.
 
 ## Current menu limitations
 
-- Menu 0.2.1 is included. The reported colosseum/enemy labeling correction is still pending.
+- Menu 0.2.2 is included. The reported colosseum/enemy labeling correction is still pending.
 - Enemy labels use AFK map targets; special areas can display a surrounding area's enemy. Check the map name beneath each label.
 - World/location numbers are menu numbers, not official map IDs.
 - Travel mode only changes maps. Assignment mode starts gathering for mining, fishing, chopping, and catching; other skills remain travel-only.
-- Progression unlocks are not checked.
+- Inactive characters in Compass or Tesseract challenge runs are hidden until their live unlock rules can be checked while active.
 - A game update may require adapting the internal game references.
 
 The repository contains custom tools only, not game files or account data.
