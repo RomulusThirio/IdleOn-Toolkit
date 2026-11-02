@@ -19,11 +19,11 @@ Keep the same `Install.bat` and run it again for future updates. It clones `Romu
 
 Select **Assign activity and return**, choose a character, and click a mining, fishing, chopping, or catching destination. Choose the resource and click **Start assignment**.
 
-The menu switches characters, waits 5 seconds, claims AFK gains using the native cache action, collects remaining drops, and waits at least 2 more seconds before traveling. After arrival it waits 1 second, moves to the resource, and checks that gathering stays active for 1.5 seconds before saving and switching back. Returning AFK gains are handled too. Cache deposits follow the game's unlock and storage rules.
+The menu switches characters, checks that native AFK processing has finished, claims gains using the cache action, and collects remaining drops before traveling. Once the map is ready, it selects the nearest matching resource and checks that gathering has started before saving and switching back. Returning AFK gains are handled too. Each step advances on game state, without added wait timers. Cache deposits follow the game's unlock and storage rules.
 
-One assignment runs at a time. Collect drops on your starting character first. Full bags, missing resources, interrupted gathering, or timeouts stop the assignment on the current character. **Cancel** stops further actions; a switch or transition already in progress will finish. Check the character and its loot before retrying.
+One assignment runs at a time. Collect drops on your starting character first. An assignment stops with an error after 10 seconds without progress. Moving toward a resource or collecting loot resets that timer. Full bags, missing resources, and interrupted gathering also stop the assignment on the current character. **Cancel** stops further actions; a switch or transition already in progress will finish. Check the character and its loot before retrying.
 
-Assignment timing, loot checks, movement and UI controls are covered by automated tests. Live character assignment still needs in-game verification.
+Assignment checks, loot handling, nearest-resource selection, and UI controls are covered by automated tests.
 
 **This repository is private.** Recipients need repository access and GitHub authentication in Git (normally handled by Git Credential Manager included with Git for Windows). A downloaded launcher does not grant repository access. If Git reports “Repository not found,” check the signed-in account and repository permissions.
 
@@ -49,7 +49,7 @@ Run the assignment tests with `node --test tests/assignment.test.cjs`.
 
 ## Current menu limitations
 
-- Menu 0.2.0 is included. The reported colosseum/enemy labeling correction is still pending.
+- Menu 0.2.1 is included. The reported colosseum/enemy labeling correction is still pending.
 - Enemy labels use AFK map targets; special areas can display a surrounding area's enemy. Check the map name beneath each label.
 - World/location numbers are menu numbers, not official map IDs.
 - Travel mode only changes maps. Assignment mode starts gathering for mining, fishing, chopping, and catching; other skills remain travel-only.

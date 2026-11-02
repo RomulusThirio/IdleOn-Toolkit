@@ -1,21 +1,24 @@
 /* Injected inside the installed game's closure; uses its own map data. */
 (() => {
   if (window.__romNavigation) return;
-  window.__romNavigation = { version: '0.2.0' };
+  window.__romNavigation = { version: '0.2.1' };
   let pending = null;
   const clean = value => String(value == null ? '' : value).replace(/_/g, ' ');
   const get = key => a.engine && a.engine.getGameAttribute(key);
   function createAssignment(adapter, clock = () => Date.now()) {
     let job = null;
-    const durations = { switch:45000, afk:45000, loot:45000, travel:30000, arrival:15000, target:15000, activity:45000, finish:30000 };
+    const stallTimeout = 10000;
     const change = (phase, message) => {
-      job.phase = phase; job.since = clock(); job.issued = false; job.stable = null;
+      job.phase = phase; job.issued = false;
+      job.lastProgress = clock(); job.progress = undefined;
+      if (phase==='afk') job.afkClaimed=false;
       adapter.report(message);
     };
     const stop = message => { job = null; adapter.report(message); };
     function claimAndWait() {
       if (adapter.afkOpen()) {
         adapter.claimAfk();
+        job.afkClaimed=true;
         change('loot', 'Claiming AFK loot and collecting drops…');
       } else if (adapter.canAct()) change('loot', 'Checking remaining drops…');
     }
@@ -31,7 +34,12 @@
       tick() {
         if (!job) return;
         try {
-          if (clock()-job.since > durations[job.phase]) throw new Error('Timed out during '+job.phase+'. Check the current character and its loot before retrying.');
+          if (typeof adapter.progress === 'function') {
+            const progress = adapter.progress(job.phase);
+            if (job.progress !== undefined && progress !== job.progress) job.lastProgress = clock();
+            job.progress = progress;
+          }
+          if (clock()-job.lastProgress >= stallTimeout) throw new Error('No progress for 10 seconds during '+job.phase+'. Check the current character and its loot before retrying.');
           const expected = job.returning ? job.origin : job.spec.character;
           if (job.phase !== 'switch' && adapter.character() !== expected) throw new Error('The active character changed unexpectedly.');
           if (job.phase === 'switch') {
@@ -40,13 +48,20 @@
               job.issued = true;
               if (adapter.character() !== expected) adapter.switchCharacter(expected);
             }
-            if (adapter.character() === expected && adapter.loaded()) change('afk', 'Waiting 5 seconds for '+expected+' to load AFK gains…');
+            if (adapter.character() === expected && adapter.loaded()) change('afk', 'Checking AFK gains for '+expected+'…');
           } else if (job.phase === 'afk') {
-            if (adapter.loaded() && clock()-job.since >= 5000) claimAndWait();
+            if (adapter.loaded() && adapter.afkReady()) claimAndWait();
           } else if (job.phase === 'loot') {
-            if (adapter.afkOpen() || !adapter.canAct()) return;
+            if (adapter.afkOpen()) {
+              if (!job.afkClaimed) {
+                adapter.claimAfk(); job.afkClaimed=true;
+                adapter.report('Claiming AFK loot and collecting drops…');
+              }
+              return;
+            }
+            if (!adapter.canAct()) return;
             adapter.collectDrops();
-            if (adapter.dropCount() > 0 || clock()-job.since < 2000) return;
+            if (adapter.dropCount() > 0) return;
             if (job.returning) { stop('Assignment complete. Returned to '+job.origin+'.'); return; }
             change('travel', 'Traveling to '+job.spec.location+'…');
           } else if (job.phase === 'travel') {
@@ -59,15 +74,13 @@
             if (adapter.loaded() && adapter.map() === job.spec.map) change('arrival', 'Waiting for the destination to load…');
           } else if (job.phase === 'arrival') {
             if (adapter.map() !== job.spec.map) throw new Error('The map changed unexpectedly.');
-            if (clock()-job.since >= 1000 && adapter.canAct()) change('target', 'Finding '+job.spec.resourceName+'…');
+            if (adapter.loaded() && adapter.canAct()) change('target', 'Finding '+job.spec.resourceName+'…');
           } else if (job.phase === 'target') {
             if (adapter.map() !== job.spec.map) throw new Error('The map changed unexpectedly.');
             if (adapter.beginActivity(job.spec.resource)) change('activity', 'Moving to '+job.spec.resourceName+' and waiting for gathering…');
           } else if (job.phase === 'activity') {
             if (adapter.map() !== job.spec.map) throw new Error('The map changed unexpectedly.');
-            if (!adapter.activityStarted(job.spec.resource)) { job.stable=null; return; }
-            if (job.stable === null) job.stable=clock();
-            if (clock()-job.stable >= 1500) change('finish', 'Gathering confirmed. Checking drops before returning…');
+            if (adapter.activityStarted(job.spec.resource)) change('finish', 'Gathering confirmed. Checking drops before returning…');
           } else if (job.phase === 'finish') {
             if (adapter.map() !== job.spec.map || !adapter.activityStarted(job.spec.resource)) throw new Error('Gathering stopped before the assignment could be saved.');
             adapter.collectDrops();
@@ -96,8 +109,29 @@
     const drops = () => actors(44).map(actor=>behavior(actor,'ActorEvents_44')).filter(drop=>drop && Number(drop._CollectedStatus)!==1 && Number(drop._DropAmount)>0);
     const loaded = () => !!(playerBehavior() && Array.isArray(get('MapMonstersList')) && !c.isTransitioning() && c.getCurrentSceneName()!=='PlayerSelect');
     const canAct = () => loaded() && !afk() && Number((get('OptionsList') || [])[18])===0 && Number(get('BlockMovement'))===0;
+    let awaitingAfk = null;
+    const nativeAfkGains = q._customBlock_AFKgains;
+    if (typeof nativeAfkGains === 'function') {
+      q._customBlock_AFKgains = function(...args) {
+        const owner=character();
+        const result=nativeAfkGains.apply(this,args);
+        if (awaitingAfk===owner && character()===owner) awaitingAfk=null;
+        return result;
+      };
+    }
     return {
       report, character, loaded, canAct,
+      afkReady:()=>awaitingAfk===null,
+      progress(phase) {
+        if (phase==='switch' || phase==='travel') return JSON.stringify([character(),get('CurrentMap'),loaded()]);
+        if (phase==='afk' || phase==='arrival') return JSON.stringify([loaded(),awaitingAfk,!!afk(),canAct()]);
+        if (phase==='loot' || phase==='finish') return JSON.stringify([!!afk(),canAct(),drops().map(drop=>[drop.actor?.ID,drop._CollectedStatus,drop._DropAmount])]);
+        if (phase==='activity') {
+          const actor=player(), state=playerBehavior();
+          return JSON.stringify([get('CurrentMap'),state?._PlayerNode,actor && Math.round(actor.getX()),actor && Math.round(actor.getY()),get('PlayerMoveMaps')?.[0]?.h?.[character()],get('AFKtarget')]);
+        }
+        return '';
+      },
       map:()=>Number(get('CurrentMap')),
       afkOpen:()=>!!afk(),
       canSwitch:()=>canAct(),
@@ -111,7 +145,7 @@
         if (!lists || c.getIDForScene(String(lists.MapName[spec.map]))<0) throw new Error('Destination is unavailable.');
         const resources=[lists.MapAFKtarget[spec.map],...(lists.MapAFKtargetSide[spec.map] || [])];
         if (!resources.includes(spec.resource)) throw new Error('That resource is not listed on this map.');
-        for (const [name, fn] of [['character switch',u.playButton],['cloud save',v._customBlock_CloudSAVE],['local save',k._customBlock_SaveGamee],['travel',q._customBlock_Teleport],['network movement',v._customBlock_NetworkMove]]) {
+        for (const [name, fn] of [['AFK gains',nativeAfkGains],['character switch',u.playButton],['cloud save',v._customBlock_CloudSAVE],['local save',k._customBlock_SaveGamee],['travel',q._customBlock_Teleport],['network movement',v._customBlock_NetworkMove]]) {
           if (typeof fn!=='function') throw new Error('The game no longer exposes '+name+'.');
         }
       },
@@ -127,9 +161,12 @@
         a.engine.setGameAttribute('CloudsaveTimer',Number(get('CloudsaveTimer'))+2);
         k._customBlock_SaveGamee();
         get('OptionsList')[15]=index;
-        u.playButton(name);
-        get('FamilyValuesMap').h.SwapPlayerStatus='Swap';
-        c.switchScene(scene.getID(),c.createFadeOut(.3,0),c.createFadeIn(.3,0));
+        awaitingAfk=name;
+        try {
+          u.playButton(name);
+          get('FamilyValuesMap').h.SwapPlayerStatus='Swap';
+          c.switchScene(scene.getID(),c.createFadeOut(.3,0),c.createFadeIn(.3,0));
+        } catch (error) { awaitingAfk=null; throw error; }
       },
       claimAfk() {
         const popup=afk();
@@ -150,10 +187,17 @@
       travel:map=>q._customBlock_Teleport(map),
       beginActivity(resource) {
         if (!canAct()) return false;
-        const target=(get('MapMonstersList') || []).find(actor=>{
+        const origin=player();
+        const distance=actor=>{
+          const mob=behavior(actor,'ActorEvents_1');
+          const dx=actor.getX()+Number(mob._Monster0ffsetX || 0)-origin.getXCenter();
+          const dy=actor.getY()+Number(mob._Monster0ffsetY || 0)-origin.getYCenter();
+          return dx*dx+dy*dy;
+        };
+        const target=(get('MapMonstersList') || []).filter(actor=>{
           const mob=behavior(actor,'ActorEvents_1');
           return mob && mob._MonsterType===resource && Number(get('MonsterAlive')?.[mob._MonsterID])===1;
-        });
+        }).sort((left,right)=>distance(left)-distance(right))[0];
         if (!target) return false;
         const mob=behavior(target,'ActorEvents_1'), state=playerBehavior(), id=character(), movement=get('PlayerMoveMaps');
         if (!movement || !state) throw new Error('Movement data is unavailable.');
@@ -321,13 +365,13 @@
         }
         if(pending){
           const job=pending;
-          if(Date.now()-job.started>15000){pending=null;el('cancel').hidden=true;render();status('Travel timed out. Check the game before retrying.');return;}
+          if(Date.now()-job.started>=10000){pending=null;el('cancel').hidden=true;render();status('Travel timed out after 10 seconds. Check the game before retrying.');return;}
           if(!job.issued && ready() && !c.isTransitioning()) {job.issued=true;q._customBlock_Teleport(job.row.map);status('Traveling to '+job.row.name+'…');}
           else if(job.issued && !c.isTransitioning() && Number(get('CurrentMap'))===job.row.map){pending=null;el('cancel').hidden=true;render();status('Arrived at '+job.row.location+'.');}
         } else if(!el('panel').hidden && (!el('rows').children.length || ready() !== previousReady)) render();
         previousReady = ready();
       }catch(error){pending=null;el('cancel').hidden=true;render();status('Travel stopped: '+error.message);}
-    },500);
+    },250);
   }
   setTimeout(mount,0);
 })()

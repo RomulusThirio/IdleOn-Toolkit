@@ -10,65 +10,79 @@ const createAssignment = vm.runInNewContext(controllerSource + '; createAssignme
 const spec = {character:'Miner', map:6, resource:'Copper', resourceName:'Copper', location:'Tunnels Entrance'};
 
 function fixture() {
-  let now = 0;
-  const state = {character:'Main', map:1, loaded:true, popup:false, drops:0, collecting:true, gathering:false, target:true, canAct:true};
-  const calls = [], messages = [];
-  const adapter = {
-    report:message=>messages.push(message),
-    character:()=>state.character, map:()=>state.map, loaded:()=>state.loaded,
-    canAct:()=>state.loaded && state.canAct && !state.popup,
+  let now=0;
+  const state={character:'Main',map:1,loaded:true,afkReady:true,popup:false,drops:0,collecting:true,gathering:false,target:true,canAct:true,position:0};
+  const calls=[],messages=[];
+  const adapter={
+    report:message=>messages.push(message),character:()=>state.character,map:()=>state.map,loaded:()=>state.loaded,
+    afkReady:()=>state.afkReady,canAct:()=>state.loaded && state.canAct && !state.popup,
     canSwitch:()=>state.loaded && state.canAct && !state.popup,
     preflight:()=>{if(state.drops)throw Error('Collect ground drops first.');},
-    switchCharacter:name=>{calls.push(['switch',name]);state.loaded=false;},
+    switchCharacter:name=>{calls.push(['switch',name]);state.loaded=false;state.afkReady=false;},
     afkOpen:()=>state.popup,
+    progress:phase=>phase==='activity' ? String(state.position) : JSON.stringify([state.character,state.map,state.loaded,state.afkReady,state.popup,state.drops,state.canAct]),
     claimAfk:()=>{calls.push(['claim']);state.popup=false;state.drops=3;},
-    collectDrops:()=>{calls.push(['collect']);if(state.collecting)state.drops=0;},
-    dropCount:()=>state.drops,
+    collectDrops:()=>{calls.push(['collect']);if(state.collecting)state.drops=0;},dropCount:()=>state.drops,
     travel:map=>{calls.push(['travel',map]);state.loaded=false;},
     beginActivity:resource=>{if(!state.target)return false;calls.push(['activity',resource]);return true;},
     activityStarted:()=>state.gathering
   };
   const controller=createAssignment(adapter,()=>now);
   const tick=ms=>{now+=ms || 0;controller.tick();};
-  const enterTarget=()=>{controller.start(spec);tick();state.character='Miner';state.loaded=true;state.popup=true;tick();};
+  const enterTarget=()=>{controller.start(spec);tick();state.character='Miner';state.loaded=true;state.afkReady=true;state.popup=true;tick();};
   const reachActivity=()=>{
-    enterTarget();tick(5000);tick(2000);tick();state.map=6;state.loaded=true;tick();tick(1000);tick();
+    enterTarget();tick();tick();tick();state.map=6;state.loaded=true;tick();tick();tick();
     assert.equal(controller.current.phase,'activity');
   };
   return {state,calls,messages,controller,tick,enterTarget,reachActivity};
 }
 
-test('waits for the character, AFK gains, loot and arrival, then confirms gathering before returning',()=>{
-  const f=fixture();f.enterTarget();f.tick(4999);
-  assert.equal(f.calls.filter(c=>c[0]==='claim').length,0);
-  f.tick(1);assert.equal(f.calls.filter(c=>c[0]==='claim').length,1);
-  f.tick(1999);assert.equal(f.calls.filter(c=>c[0]==='travel').length,0);
-  f.tick(1);f.tick();f.tick();assert.equal(f.calls.filter(c=>c[0]==='travel').length,1);
-  f.state.map=6;f.state.loaded=true;f.tick();f.tick(999);
-  assert.equal(f.calls.filter(c=>c[0]==='activity').length,0);
-  f.tick(1);f.tick();f.tick(2000);
+test('readiness checks complete an assignment without advancing the clock',()=>{
+  const f=fixture();f.reachActivity();
+  assert.equal(f.calls.filter(c=>c[0]==='claim').length,1);
+  assert.equal(f.calls.filter(c=>c[0]==='travel').length,1);
   assert.equal(f.calls.filter(c=>c[0]==='switch').length,1);
-  f.state.gathering=true;f.tick();f.tick(1499);assert.equal(f.calls.filter(c=>c[0]==='switch').length,1);
-  f.tick(1);f.tick();f.tick();assert.equal(f.calls.filter(c=>c[0]==='switch').length,2);
-  f.state.character='Main';f.state.loaded=true;f.tick();f.tick(5000);f.tick(2000);
+  f.state.gathering=true;f.tick();f.tick();f.tick();
+  assert.equal(f.calls.filter(c=>c[0]==='switch').length,2);
+  f.state.character='Main';f.state.loaded=true;f.state.afkReady=true;
+  f.tick();f.tick();f.tick();
   assert.equal(f.controller.current,null);assert.match(f.messages.at(-1),/Returned to Main/);
 });
 
-test('uncollected AFK drops prevent travel and timeout leaves the character in place',()=>{
-  const f=fixture();f.state.collecting=false;f.enterTarget();f.tick(5000);f.tick(2000);f.tick(44000);
-  assert.equal(f.controller.current,null);assert.equal(f.state.character,'Miner');
-  assert.equal(f.calls.filter(c=>c[0]==='travel').length,0);assert.match(f.messages.at(-1),/loot/);
+test('waits for native AFK processing even when the character has loaded',()=>{
+  const f=fixture();f.enterTarget();f.state.afkReady=false;f.tick(9000);
+  assert.equal(f.calls.filter(c=>c[0]==='claim').length,0);
+  f.state.afkReady=true;f.tick();assert.equal(f.calls.filter(c=>c[0]==='claim').length,1);
+});
+
+test('uncollected AFK drops block travel and stop after ten seconds without progress',()=>{
+  const f=fixture();f.state.collecting=false;f.enterTarget();f.tick();f.tick();f.tick(9999);
+  assert.notEqual(f.controller.current,null);f.tick(1);
+  assert.equal(f.controller.current,null);assert.equal(f.calls.filter(c=>c[0]==='travel').length,0);
+  assert.match(f.messages.at(-1),/No progress for 10 seconds during loot/);
 });
 
 test('a popup that has not closed is never claimed twice or traveled away from',()=>{
-  const f=fixture();f.enterTarget();f.tick(5000);f.state.popup=true;f.tick(10000);f.tick(10000);
+  const f=fixture();f.enterTarget();f.tick();f.state.popup=true;f.tick(4000);f.tick(4000);
   assert.equal(f.calls.filter(c=>c[0]==='claim').length,1);assert.equal(f.calls.filter(c=>c[0]==='travel').length,0);
 });
 
-test('activity timeout does not save or switch back prematurely',()=>{
-  const f=fixture();f.reachActivity();f.tick(45001);
+test('a popup arriving during loot checks is claimed before travel',()=>{
+  const f=fixture();f.enterTarget();f.state.popup=false;f.tick();f.state.popup=true;f.tick();
+  assert.equal(f.calls.filter(c=>c[0]==='claim').length,1);assert.equal(f.calls.filter(c=>c[0]==='travel').length,0);
+});
+
+test('a stationary character times out rather than switching back without gathering',()=>{
+  const f=fixture();f.reachActivity();f.tick();f.tick(10000);
   assert.equal(f.controller.current,null);assert.equal(f.calls.filter(c=>c[0]==='switch').length,1);
-  assert.match(f.messages.at(-1),/activity/);
+  assert.match(f.messages.at(-1),/No progress for 10 seconds during activity/);
+});
+
+test('movement keeps the job alive, then ten stalled seconds stop it',()=>{
+  const f=fixture();f.reachActivity();f.tick();
+  for(let i=0;i<4;i++){f.state.position+=10;f.tick(4000);}
+  assert.equal(f.controller.current.phase,'activity');f.tick(9999);assert.notEqual(f.controller.current,null);
+  f.tick(1);assert.equal(f.controller.current,null);
 });
 
 test('manual character changes stop the assignment',()=>{
@@ -76,20 +90,14 @@ test('manual character changes stop the assignment',()=>{
   assert.equal(f.controller.current,null);assert.match(f.messages.at(-1),/changed unexpectedly/);
 });
 
-test('cancel prevents all subsequent actions',()=>{
+test('cancel prevents subsequent actions',()=>{
   const f=fixture();f.enterTarget();f.controller.cancel();const count=f.calls.length;f.tick(100000);
   assert.equal(f.calls.length,count);assert.equal(f.controller.current,null);
 });
 
 test('current-character assignment completes without switching',()=>{
-  const f=fixture();f.state.character='Miner';f.reachActivity();f.state.gathering=true;f.tick();f.tick(1500);f.tick();
+  const f=fixture();f.state.character='Miner';f.reachActivity();f.state.gathering=true;f.tick();f.tick();
   assert.equal(f.controller.current,null);assert.equal(f.calls.filter(c=>c[0]==='switch').length,0);
-});
-
-test('gathering must stay confirmed for the whole confirmation window',()=>{
-  const f=fixture();f.reachActivity();f.state.gathering=true;f.tick();f.tick(1000);f.state.gathering=false;f.tick();
-  f.state.gathering=true;f.tick();f.tick(1000);assert.equal(f.controller.current.phase,'activity');
-  f.tick(500);assert.equal(f.controller.current.phase,'finish');
 });
 
 test('drops on the starting character reject the assignment',()=>{
@@ -98,14 +106,15 @@ test('drops on the starting character reject the assignment',()=>{
 });
 
 test('returning character AFK gains and drops are handled before completion',()=>{
-  const f=fixture();f.reachActivity();f.state.gathering=true;f.tick();f.tick(1500);f.tick();f.tick();
-  f.state.character='Main';f.state.loaded=true;f.state.popup=true;f.tick();f.tick(5000);
-  assert.equal(f.calls.filter(c=>c[0]==='claim').length,2);assert.notEqual(f.controller.current,null);
-  f.tick(2000);assert.equal(f.controller.current,null);
+  const f=fixture();f.reachActivity();f.state.gathering=true;f.tick();f.tick();f.tick();
+  f.state.character='Main';f.state.loaded=true;f.state.popup=true;f.tick();f.tick();
+  assert.equal(f.calls.filter(c=>c[0]==='claim').length,1);
+  f.state.afkReady=true;f.tick();assert.equal(f.calls.filter(c=>c[0]==='claim').length,2);
+  f.tick();assert.equal(f.controller.current,null);
 });
 
 test('gathering stopping before the return leaves the character in place',()=>{
-  const f=fixture();f.reachActivity();f.state.gathering=true;f.tick();f.tick(1500);f.state.gathering=false;f.tick();
+  const f=fixture();f.reachActivity();f.state.gathering=true;f.tick();f.state.gathering=false;f.tick();
   assert.equal(f.controller.current,null);assert.equal(f.calls.filter(c=>c[0]==='switch').length,1);
 });
 
@@ -114,7 +123,7 @@ function gameFixture() {
   const calls=[], popups=[], ground=[];
   const playerState={_PlayerNode:0,_TargetEnemy:null};
   const targetState={_MonsterType:'Copper',_MonsterID:1,_MonsterNODE:2,_Monster0ffsetX:10};
-  const actor=(name,state)=>({dead:false,recycled:false,behaviors:{getBehavior:key=>key===name ? state : null},getX:()=>100,getAnimation:()=> '5'});
+  const actor=(name,state)=>({dead:false,recycled:false,behaviors:{getBehavior:key=>key===name ? state : null},getX:()=>100,getY:()=>0,getXCenter:()=>100,getYCenter:()=>0,getAnimation:()=> '5'});
   const target=actor('ActorEvents_1',targetState), player=actor('ActorEvents_20',playerState);
   const attrs={UserInfo:['Main'],OtherPlayers:{h:{Main:player}},MapMonstersList:[target],
     OptionsList:Array(19).fill(0),BlockMovement:0,GetPlayersUsernames:['Main','Miner'],
@@ -129,7 +138,7 @@ function gameFixture() {
       createFadeOut:()=>null,createFadeIn:()=>null,switchScene:id=>calls.push(['scene',id])},
     k:{_customBlock_add_new_player_to_database:name=>{calls.push(['database',name]);return name;},_customBlock_SaveGamee:()=>calls.push(['local-save'])},
     v:{_customBlock_CloudSAVE:()=>calls.push(['cloud-save']),_customBlock_NetworkMove:(...args)=>calls.push(['movement',...args])},
-    q:{_customBlock_Teleport:map=>calls.push(['travel',map])},u:{playButton:name=>calls.push(['play',name])},
+    q:{_customBlock_AFKgains:()=> 'native gains result',_customBlock_Teleport:map=>calls.push(['travel',map])},u:{playButton:name=>calls.push(['play',name])},
     Xa:{get:()=>({scenes:{h:{19:{getID:()=>19}}}})}};
   const adapter=vm.runInNewContext(adapterSource+';gameAdapter(()=>{})',context);
   return {adapter,attrs,calls,popups,ground,actor,playerState,target,targetState,context};
@@ -167,6 +176,40 @@ test('movement targets the real resource and requires matching animation, state 
 
 test('a missing resource never starts gathering',()=>{
   const f=gameFixture();assert.equal(f.adapter.beginActivity('Iron'),false);assert.equal(f.calls.length,0);
+});
+
+test('nearest matching resource wins even when the first resource is upper left',()=>{
+  const f=gameFixture();
+  const farState={...f.targetState,_MonsterID:1,_Monster0ffsetX:0};
+  const nearState={...f.targetState,_MonsterID:2,_Monster0ffsetX:0};
+  const far=f.actor('ActorEvents_1',farState),near=f.actor('ActorEvents_1',nearState);
+  far.getX=()=>0;far.getY=()=>-500;near.getX=()=>130;near.getY=()=>0;
+  f.attrs.MapMonstersList=[far,near];f.attrs.MonsterAlive=[0,1,1];
+  f.adapter.beginActivity('Copper');assert.equal(f.playerState._TargetEnemy,near);
+});
+
+test('nearest search ignores inactive resources and different resource types',()=>{
+  const f=gameFixture();
+  const inactive=f.actor('ActorEvents_1',{...f.targetState,_MonsterID:2});
+  const iron=f.actor('ActorEvents_1',{...f.targetState,_MonsterType:'Iron',_MonsterID:3});
+  f.attrs.MapMonstersList=[inactive,iron,f.target];f.attrs.MonsterAlive=[0,1,0,1];
+  f.adapter.beginActivity('Copper');assert.equal(f.playerState._TargetEnemy,f.target);
+});
+
+test('AFK readiness requires the selected character native gains callback',()=>{
+  const f=gameFixture();f.adapter.switchCharacter('Miner');assert.equal(f.adapter.afkReady(),false);
+  assert.equal(f.context.q._customBlock_AFKgains('MINING',[]),'native gains result');
+  assert.equal(f.adapter.afkReady(),false);
+  f.attrs.UserInfo[0]='Miner';f.context.q._customBlock_AFKgains('MINING',[]);
+  assert.equal(f.adapter.afkReady(),true);
+});
+
+test('progress reflects movement and partial loot pickup',()=>{
+  const f=gameFixture();const before=f.adapter.progress('activity');
+  f.attrs.OtherPlayers.h.Main.getX=()=>110;assert.notEqual(f.adapter.progress('activity'),before);
+  const drop={_CollectedStatus:0,_DropAmount:20,_PlayerDroppedItem:0,_DungItemStatus:0};
+  f.ground.push(f.actor('ActorEvents_44',drop));const loot=f.adapter.progress('loot');drop._DropAmount=10;
+  assert.notEqual(f.adapter.progress('loot'),loot);
 });
 
 test('menu assignment controls select a character, destination and resource',()=>{
