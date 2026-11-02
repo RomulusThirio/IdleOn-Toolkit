@@ -1,7 +1,7 @@
 /* Injected inside the installed game's closure; uses its own map data. */
 (() => {
   if (window.__romNavigation) return;
-  window.__romNavigation = { version: '0.2.3' };
+  window.__romNavigation = { version: '0.2.4' };
   let pending = null;
   const clean = value => String(value == null ? '' : value).replace(/_/g, ' ');
   const get = key => a.engine && a.engine.getGameAttribute(key);
@@ -109,10 +109,8 @@
               if (!adapter.canSwitch()) return;
               if (job.returning) {
                 if (adapter.map() !== job.spec.map || !adapter.activityStarted(job.spec.resource)) throw new Error('Gathering stopped before the assignment could be saved.');
-                adapter.collectDrops();
-                if (adapter.dropCount()) return;
               }
-              if (adapter.character() !== expected && adapter.switchCharacter(expected) === false) return;
+              if (adapter.character() !== expected && adapter.switchCharacter(expected, {allowGroundDrops:job.returning}) === false) return;
               job.issued = true;
             }
             if (adapter.character() === expected && adapter.loaded()) change('afk', 'Checking AFK gains for '+expected+'…');
@@ -154,11 +152,10 @@
             if (adapter.beginActivity(job.spec.resource)) change('activity', 'Moving to '+job.spec.resourceName+' and waiting for gathering…');
           } else if (job.phase === 'activity') {
             if (adapter.map() !== job.spec.map) throw new Error('The map changed unexpectedly.');
-            if (adapter.activityStarted(job.spec.resource)) change('finish', 'Gathering confirmed. Checking drops before returning…');
+            if (adapter.activityStarted(job.spec.resource)) change('finish', 'Gathering confirmed. Waiting for the first drop.');
           } else if (job.phase === 'finish') {
             if (adapter.map() !== job.spec.map || !adapter.activityStarted(job.spec.resource)) throw new Error('Gathering stopped before the assignment could be saved.');
-            adapter.collectDrops();
-            if (adapter.dropCount()) return;
+            if (!adapter.dropCount()) return;
             if (job.origin === job.spec.character) { stop('Assignment complete. '+job.spec.character+' is gathering '+job.spec.resourceName+'.'); return; }
             job.returning=true;
             change('switch', 'Saving the activity and returning to '+job.origin+'…');
@@ -226,9 +223,9 @@
         }
         lastAfkMenu=false;
       },
-      switchCharacter(name) {
+      switchCharacter(name, {allowGroundDrops=false} = {}) {
         if (!canAct()) return false;
-        if (drops().length) return false;
+        if (!allowGroundDrops && drops().length) return false;
         const index=(get('GetPlayersUsernames') || []).indexOf(name);
         if (index<0) throw new Error('Character not found.');
         const scene=Xa.get().scenes.h[19];

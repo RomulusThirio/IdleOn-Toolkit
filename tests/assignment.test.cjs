@@ -43,7 +43,7 @@ test('readiness checks advance immediately except for the AFK drop settling paus
   assert.equal(f.calls.filter(c=>c[0]==='claim').length,1);
   assert.equal(f.calls.filter(c=>c[0]==='travel').length,1);
   assert.equal(f.calls.filter(c=>c[0]==='switch').length,1);
-  f.state.gathering=true;f.tick();f.tick();f.tick();
+  f.state.gathering=true;f.state.drops=1;f.tick();f.tick();f.tick();
   assert.equal(f.calls.filter(c=>c[0]==='switch').length,2);
   f.state.character='Main';f.state.loaded=true;f.state.afkReady=true;
   f.tick();f.tick();f.tick();
@@ -56,26 +56,25 @@ test('waits for native AFK processing even when the character has loaded',()=>{
   f.state.afkReady=true;f.tick();assert.equal(f.calls.filter(c=>c[0]==='claim').length,1);
 });
 
-test('new gathering drops between the finish check and return are collected before switching',()=>{
-  const f=fixture();f.reachActivity();f.state.gathering=true;f.tick();f.tick();
-  assert.equal(f.controller.current.phase,'switch');
-  f.state.drops=1;f.tick();
-  assert.equal(f.state.drops,0);
-  assert.deepEqual(f.calls.at(-1),['switch','Main']);
+test('gathering waits for a drop, then returns without collecting it',()=>{
+  const f=fixture();f.reachActivity();f.state.gathering=true;f.tick();
+  const collected=f.calls.filter(call=>call[0]==='collect').length;
+  f.tick(5000);assert.equal(f.controller.current.phase,'finish');
+  f.state.drops=1;f.state.collecting=false;f.tick();f.tick();
+  assert.equal(f.state.drops,1);assert.deepEqual(f.calls.at(-1),['switch','Main']);
+  assert.equal(f.calls.filter(call=>call[0]==='collect').length,collected);
 });
 
-test('uncollectible drops at the return switch wait and time out without leaving',()=>{
+test('no gathering drop for ten seconds stops without switching back',()=>{
   const f=fixture();f.reachActivity();f.state.gathering=true;f.tick();f.tick();
-  f.state.collecting=false;f.state.drops=1;f.tick();
-  assert.equal(f.controller.current.issued,false);
-  assert.equal(f.calls.filter(call=>call[0]==='switch').length,1);
   f.tick(10000);assert.equal(f.controller.current,null);
-  assert.match(f.messages.at(-1),/No progress for 10 seconds during switch/);
+  assert.equal(f.calls.filter(call=>call[0]==='switch').length,1);
+  assert.match(f.messages.at(-1),/No progress for 10 seconds during finish/);
 });
 
 test('a deferred native switch is retried instead of being marked issued',()=>{
   let attempts=0;
-  // Simulate a new drop detected by the final native guard.
+  // A busy native switch is retried on the next check.
   const adapter=createAssignment({report(){},preflight(){},character:()=> 'Main',canSwitch:()=>true,
     switchCharacter(){attempts++;return false;},loaded:()=>true},()=>0);
   adapter.start(spec);adapter.tick();adapter.tick();
@@ -123,7 +122,7 @@ test('cancel prevents subsequent actions',()=>{
 });
 
 test('current-character assignment completes without switching',()=>{
-  const f=fixture();f.state.character='Miner';f.reachActivity();f.state.gathering=true;f.tick();f.tick();
+  const f=fixture();f.state.character='Miner';f.reachActivity();f.state.gathering=true;f.state.drops=1;f.tick();f.tick();
   assert.equal(f.controller.current,null);assert.equal(f.calls.filter(c=>c[0]==='switch').length,0);
 });
 
@@ -133,7 +132,7 @@ test('drops on the starting character reject the assignment',()=>{
 });
 
 test('returning character AFK gains and drops are handled before completion',()=>{
-  const f=fixture();f.reachActivity();f.state.gathering=true;f.tick();f.tick();f.tick();
+  const f=fixture();f.reachActivity();f.state.gathering=true;f.state.drops=1;f.tick();f.tick();f.tick();
   f.state.character='Main';f.state.loaded=true;f.state.popup=true;f.tick();f.tick();
   assert.equal(f.calls.filter(c=>c[0]==='claim').length,1);
   f.state.afkReady=true;f.tick();assert.equal(f.calls.filter(c=>c[0]==='claim').length,2);
@@ -182,7 +181,7 @@ test('an automatically closed AFK menu still gets the settling pause',()=>{
 });
 
 test('gathering stopping before the return leaves the character in place',()=>{
-  const f=fixture();f.reachActivity();f.state.gathering=true;f.tick();f.state.gathering=false;f.tick();
+  const f=fixture();f.reachActivity();f.state.gathering=true;f.state.drops=1;f.tick();f.state.gathering=false;f.tick();
   assert.equal(f.controller.current,null);assert.equal(f.calls.filter(c=>c[0]==='switch').length,1);
 });
 
@@ -230,8 +229,16 @@ test('the native switch defers for fresh loot without saving or leaving',()=>{
   assert.equal(f.calls.at(-1)[0],'scene');
 });
 
+test('return switch can save with gathering loot still on the ground',()=>{
+  const f=gameFixture();
+  f.ground.push(f.actor('ActorEvents_44',{_CollectedStatus:0,_DropAmount:1}));
+  f.adapter.switchCharacter('Miner',{allowGroundDrops:true});
+  assert.deepEqual(f.calls,[['database','Main'],['cloud-save'],['local-save'],['play','Miner'],['scene',19]]);
+  assert.equal(f.adapter.dropCount(),1);
+});
+
 test('returning refuses to save if gathering was interrupted during the last loot check',()=>{
-  const f=fixture();f.reachActivity();f.state.gathering=true;f.tick();f.tick();
+  const f=fixture();f.reachActivity();f.state.gathering=true;f.state.drops=1;f.tick();f.tick();
   f.state.gathering=false;f.tick();assert.equal(f.controller.current,null);
   assert.equal(f.calls.filter(call=>call[0]==='switch').length,1);
   assert.match(f.messages.at(-1),/Gathering stopped/);

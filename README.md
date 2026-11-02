@@ -19,7 +19,7 @@ Keep the same `Install.bat` and run it again for future updates. It clones `Romu
 
 Select **Assign activity and return**, choose a character, and click a mining, fishing, chopping, or catching destination. Choose the resource and click **Start assignment**.
 
-The menu switches characters, checks that native AFK processing has finished, claims gains using the cache action, and collects remaining drops before traveling. Once the map is ready, it selects the nearest matching resource and checks that gathering has started before saving and switching back. Returning AFK gains are handled too. After an AFK menu closes, the menu waits 2 seconds for drops to land before checking loot. Other steps advance on game state. Cache deposits follow the game's unlock and storage rules.
+The menu switches characters, checks that native AFK processing has finished, claims gains using the cache action, and collects remaining drops before traveling. Once the map is ready, it selects the nearest matching resource and checks that gathering has started and waits for the first drop before saving and switching back. Fresh gathering drops may be left on the ground; they do not block the return. Returning AFK gains are handled too. After an AFK menu closes, the menu waits 2 seconds for drops to land before checking loot. Other steps advance on game state. Cache deposits follow the game's unlock and storage rules.
 
 One assignment runs at a time. Collect drops on your starting character first. An assignment stops with an error after 10 seconds without progress. Moving toward a resource or collecting loot resets that timer. Full bags, missing resources, and interrupted gathering also stop the assignment on the current character. **Cancel** stops further actions; a switch or transition already in progress will finish. Check the character and its loot before retrying.
 
@@ -51,7 +51,7 @@ Run the assignment tests with `node --test tests/assignment.test.cjs tests/maps.
 
 ## Current menu limitations
 
-- Menu 0.2.3 is included. New gathering drops are collected again just before the return switch. The reported colosseum/enemy labeling correction is still pending.
+- Menu 0.2.4 is included. The return switch waits for a gathering drop and can leave it behind. The reported colosseum/enemy labeling correction is still pending.
 - Enemy labels use AFK map targets; special areas can display a surrounding area's enemy. Check the map name beneath each label.
 - World/location numbers are menu numbers, not official map IDs.
 - Travel mode only changes maps. Assignment mode starts gathering for mining, fishing, chopping, and catching; other skills remain travel-only.
