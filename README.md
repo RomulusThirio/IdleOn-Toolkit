@@ -51,7 +51,7 @@ Run the assignment tests with `node --test tests/assignment.test.cjs tests/maps.
 
 ## Current menu limitations
 
-- Menu 0.2.2 is included. The reported colosseum/enemy labeling correction is still pending.
+- Menu 0.2.3 is included. New gathering drops are collected again just before the return switch. The reported colosseum/enemy labeling correction is still pending.
 - Enemy labels use AFK map targets; special areas can display a surrounding area's enemy. Check the map name beneath each label.
 - World/location numbers are menu numbers, not official map IDs.
 - Travel mode only changes maps. Assignment mode starts gathering for mining, fishing, chopping, and catching; other skills remain travel-only.

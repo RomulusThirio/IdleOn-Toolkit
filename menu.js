@@ -1,7 +1,7 @@
 /* Injected inside the installed game's closure; uses its own map data. */
 (() => {
   if (window.__romNavigation) return;
-  window.__romNavigation = { version: '0.2.2' };
+  window.__romNavigation = { version: '0.2.3' };
   let pending = null;
   const clean = value => String(value == null ? '' : value).replace(/_/g, ' ');
   const get = key => a.engine && a.engine.getGameAttribute(key);
@@ -107,8 +107,13 @@
           if (job.phase === 'switch') {
             if (!job.issued) {
               if (!adapter.canSwitch()) return;
+              if (job.returning) {
+                if (adapter.map() !== job.spec.map || !adapter.activityStarted(job.spec.resource)) throw new Error('Gathering stopped before the assignment could be saved.');
+                adapter.collectDrops();
+                if (adapter.dropCount()) return;
+              }
+              if (adapter.character() !== expected && adapter.switchCharacter(expected) === false) return;
               job.issued = true;
-              if (adapter.character() !== expected) adapter.switchCharacter(expected);
             }
             if (adapter.character() === expected && adapter.loaded()) change('afk', 'Checking AFK gains for '+expected+'…');
           } else if (job.phase === 'afk') {
@@ -193,7 +198,7 @@
       afkReady:()=>awaitingAfk===null,
       afkMenuSeen:()=>lastAfkMenu,
       progress(phase) {
-        if (phase==='switch' || phase==='travel') return JSON.stringify([character(),get('CurrentMap'),loaded()]);
+        if (phase==='switch' || phase==='travel') return JSON.stringify([character(),get('CurrentMap'),loaded(),drops().map(drop=>[drop.actor?.ID,drop._CollectedStatus,drop._DropAmount])]);
         if (phase==='afk' || phase==='arrival') return JSON.stringify([loaded(),awaitingAfk,!!afk(),canAct()]);
         if (phase==='loot' || phase==='finish') return JSON.stringify([!!afk(),canAct(),drops().map(drop=>[drop.actor?.ID,drop._CollectedStatus,drop._DropAmount])]);
         if (phase==='activity') {
@@ -222,7 +227,8 @@
         lastAfkMenu=false;
       },
       switchCharacter(name) {
-        if (!canAct() || drops().length) throw new Error('The character is not ready to switch, or loot remains on the ground.');
+        if (!canAct()) return false;
+        if (drops().length) return false;
         const index=(get('GetPlayersUsernames') || []).indexOf(name);
         if (index<0) throw new Error('Character not found.');
         const scene=Xa.get().scenes.h[19];

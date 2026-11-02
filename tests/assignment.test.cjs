@@ -56,6 +56,32 @@ test('waits for native AFK processing even when the character has loaded',()=>{
   f.state.afkReady=true;f.tick();assert.equal(f.calls.filter(c=>c[0]==='claim').length,1);
 });
 
+test('new gathering drops between the finish check and return are collected before switching',()=>{
+  const f=fixture();f.reachActivity();f.state.gathering=true;f.tick();f.tick();
+  assert.equal(f.controller.current.phase,'switch');
+  f.state.drops=1;f.tick();
+  assert.equal(f.state.drops,0);
+  assert.deepEqual(f.calls.at(-1),['switch','Main']);
+});
+
+test('uncollectible drops at the return switch wait and time out without leaving',()=>{
+  const f=fixture();f.reachActivity();f.state.gathering=true;f.tick();f.tick();
+  f.state.collecting=false;f.state.drops=1;f.tick();
+  assert.equal(f.controller.current.issued,false);
+  assert.equal(f.calls.filter(call=>call[0]==='switch').length,1);
+  f.tick(10000);assert.equal(f.controller.current,null);
+  assert.match(f.messages.at(-1),/No progress for 10 seconds during switch/);
+});
+
+test('a deferred native switch is retried instead of being marked issued',()=>{
+  let attempts=0;
+  // Simulate a new drop detected by the final native guard.
+  const adapter=createAssignment({report(){},preflight(){},character:()=> 'Main',canSwitch:()=>true,
+    switchCharacter(){attempts++;return false;},loaded:()=>true},()=>0);
+  adapter.start(spec);adapter.tick();adapter.tick();
+  assert.equal(attempts,2);assert.equal(adapter.current.issued,false);
+});
+
 test('uncollected AFK drops block travel and stop after ten seconds without progress',()=>{
   const f=fixture();f.state.collecting=false;f.enterTarget();f.tick();f.tick();f.tick(9999);
   assert.notEqual(f.controller.current,null);f.tick(1);
@@ -193,6 +219,22 @@ test('game adapter preserves the native save and character-switch order',()=>{
   const f=gameFixture();f.adapter.preflight(spec);f.adapter.switchCharacter('Miner');
   assert.deepEqual(f.calls,[['database','Main'],['cloud-save'],['local-save'],['play','Miner'],['scene',19]]);
   assert.equal(f.attrs.OptionsList[15],1);assert.equal(f.attrs.FamilyValuesMap.h.SwapPlayerStatus,'Swap');
+});
+
+test('the native switch defers for fresh loot without saving or leaving',()=>{
+  const f=gameFixture();
+  const drop={_CollectedStatus:0,_DropAmount:1};
+  f.ground.push(f.actor('ActorEvents_44',drop));
+  assert.equal(f.adapter.switchCharacter('Miner'),false);assert.equal(f.calls.length,0);
+  drop._CollectedStatus=1;f.adapter.switchCharacter('Miner');
+  assert.equal(f.calls.at(-1)[0],'scene');
+});
+
+test('returning refuses to save if gathering was interrupted during the last loot check',()=>{
+  const f=fixture();f.reachActivity();f.state.gathering=true;f.tick();f.tick();
+  f.state.gathering=false;f.tick();assert.equal(f.controller.current,null);
+  assert.equal(f.calls.filter(call=>call[0]==='switch').length,1);
+  assert.match(f.messages.at(-1),/Gathering stopped/);
 });
 
 test('game adapter invokes the AFK cache action once while an unclaimed popup exists',()=>{
