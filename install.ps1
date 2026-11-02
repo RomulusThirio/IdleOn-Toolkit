@@ -111,7 +111,9 @@ try {
     $archivePath = Join-Path $game 'resources\app.asar'
     if (!(Test-Path -LiteralPath $archivePath)) { throw 'The selected folder does not contain resources\app.asar.' }
     if (Get-Process -Name 'LegendsOfIdleon' -ErrorAction SilentlyContinue) { throw 'Close IdleOn completely, then run this launcher again.' }
-    $stateDir = Join-Path $game 'rom-travel-backups'
+    $stateDir = Join-Path $game 'idleon-toolkit-backups'
+    $legacyState = Join-Path $game 'rom-travel-backups'
+    if (!(Test-Path -LiteralPath $stateDir) -and (Test-Path -LiteralPath $legacyState)) { $stateDir = $legacyState }
     $statePath = Join-Path $stateDir 'installed.json'
     $current = [IO.File]::ReadAllBytes($archivePath)
     $currentHash = Get-Hash $current
@@ -178,7 +180,7 @@ try {
     if (!$Restore) {
         $record = @{ installedHash=$outputHash; backupHash=$backupHash; installedAt=[DateTime]::UtcNow.ToString('o') } | ConvertTo-Json
         [IO.File]::WriteAllText($statePath, $record, $utf8)
-        Write-Host "Travel menu installed in $game. Start the game and press F8."
+        Write-Host "IdleOn Toolkit installed in $game. Start the game and press F8."
     } else { Write-Host 'Original game restored.' }
     Remove-Item -LiteralPath $rollbackPath -ErrorAction SilentlyContinue
 } catch {

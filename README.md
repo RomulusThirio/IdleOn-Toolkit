@@ -6,14 +6,14 @@ Teleporting works; the new character assignments still need in-game testing. Ple
 
 ## Download just one file
 
-**[Download Install.bat](https://github.com/RomulusThirio/IdleOn-Travel/raw/refs/heads/main/Install.bat)**
+**[Download Install.bat](https://github.com/RomulusThirio/IdleOn-Toolkit/raw/refs/heads/main/Install.bat)**
 
 1. Install [Git for Windows](https://git-scm.com/download/win) once if it is not already installed. Node.js is not required.
 2. Close IdleOn and double-click `Install.bat`. You do not need to download the repository, `install.ps1`, or `menu.js`.
-3. The launcher downloads everything automatically, finds your Steam installation, backs up the game, and installs the travel menu.
+3. The launcher downloads everything automatically, finds your Steam installation, backs up the game, and installs IdleOn Toolkit.
 4. Start IdleOn normally and press **F8**.
 
-Keep the same `Install.bat` and run it again for future updates. It clones `RomulusThirio/IdleOn-Travel` on first use and runs `git pull --ff-only origin main` afterward. The repository URL is already configured.
+Keep the same `Install.bat` and run it again for future updates. It clones `RomulusThirio/IdleOn-Toolkit` on first use and runs `git pull --ff-only origin main` afterward. The repository URL is already configured.
 
 ## Assign an activity
 
@@ -35,15 +35,17 @@ Click **Stop repeat gathering** to stop. Moving away, changing characters or map
 
 **This repository is private.** Recipients need repository access and GitHub authentication in Git (normally handled by Git Credential Manager included with Git for Windows). A downloaded launcher does not grant repository access. If Git reports “Repository not found,” check the signed-in account and repository permissions.
 
+After the repository rename, download the latest `Install.bat` once using the link above. It uses the new repository URL and cache folder. Older `%LOCALAPPDATA%\IdleOnTravel` folders can be kept as-is; they are not moved or deleted.
+
 ## Where files go
 
-The launcher can live anywhere. Downloaded files are cached at `%LOCALAPPDATA%\IdleOnTravel`. Steam libraries are detected automatically; if detection fails, the installer asks for the game folder. You may also drag the game installation folder onto `Install.bat`.
+The launcher can live anywhere. Downloaded files are cached at `%LOCALAPPDATA%\IdleOnToolkit`. Steam libraries are detected automatically; if detection fails, the installer asks for the game folder. You may also drag the game installation folder onto `Install.bat`.
 
 Only the original launcher needs to be downloaded manually. Git fetches the PowerShell installer, menu, and restore tool.
 
 ## Restore
 
-Run `Restore-IdleOn.bat` inside `%LOCALAPPDATA%\IdleOnTravel`. Backups are kept in `rom-travel-backups` in the game folder.
+Run `Restore-IdleOn.bat` inside `%LOCALAPPDATA%\IdleOnToolkit`. New backups are kept in `idleon-toolkit-backups` in the game folder. Existing installations keep using `rom-travel-backups` so their restore history stays available.
 
 Restore refuses to apply an old backup if the game archive has changed since installation. Steam's **Verify integrity of game files** restores current official files if needed.
 

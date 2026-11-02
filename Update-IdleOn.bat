@@ -1,8 +1,8 @@
 @echo off
 setlocal DisableDelayedExpansion
 REM Download only this file. It fetches the installer and menu from GitHub.
-set "REPO_URL=https://github.com/RomulusThirio/IdleOn-Travel.git"
-set "REPO_DIR=%LOCALAPPDATA%\IdleOnTravel"
+set "REPO_URL=https://github.com/RomulusThirio/IdleOn-Toolkit.git"
+set "REPO_DIR=%LOCALAPPDATA%\IdleOnToolkit"
 
 where git.exe >nul 2>nul
 if errorlevel 1 (
@@ -32,18 +32,18 @@ if not exist "%REPO_DIR%\menu.js" goto failed
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%REPO_DIR%\install.ps1" -GamePath "%~1"
 if errorlevel 1 goto failed
 echo.
-echo All done. Start IdleOn normally. Press F8 for the travel menu.
+echo All done. Start IdleOn normally. Press F8 for IdleOn Toolkit.
 pause
 exit /b 0
 
 :check_origin
-git -C "%REPO_DIR%" config --get remote.origin.url "^https://github[.]com/RomulusThirio/IdleOn-Travel[.]git$" >nul
+git -C "%REPO_DIR%" config --get remote.origin.url "^https://github[.]com/RomulusThirio/IdleOn-Toolkit[.]git$" >nul
 if not errorlevel 1 exit /b 0
 echo The cached repository belongs to a different URL. Rename "%REPO_DIR%" first.
 exit /b 1
 
 :check_branch
-set "BRANCH_FILE=%REPO_DIR%\.git\idleon-travel-branch.tmp"
+set "BRANCH_FILE=%REPO_DIR%\.git\idleon-toolkit-branch.tmp"
 git -C "%REPO_DIR%" symbolic-ref --quiet --short HEAD > "%BRANCH_FILE%"
 if errorlevel 1 goto branch_failed
 set "CURRENT_BRANCH="
