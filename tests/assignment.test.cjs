@@ -272,6 +272,26 @@ test('a missing resource never starts gathering',()=>{
   const f=gameFixture();assert.equal(f.adapter.beginActivity('Iron'),false);assert.equal(f.calls.length,0);
 });
 
+test('repeat gathering reads only the matching skill XP and keeps the selected node',()=>{
+  const f=gameFixture();f.adapter.beginActivity('Copper');f.attrs.PlayerMoveMaps[0].h.Main=2;
+  f.attrs.Exp0=[99,123,88,77,66,55,44];f.attrs.Lv0=[99,10,8,7,6,5,4];
+  const snapshot=f.adapter.gatheringState();
+  assert.equal(snapshot.xp,123);assert.equal(snapshot.level,10);assert.equal(snapshot.gathering,true);
+  const nearer=f.actor('ActorEvents_1',{...f.targetState,_MonsterID:2});
+  nearer.getX=()=>100;f.attrs.MapMonstersList.unshift(nearer);f.attrs.MonsterAlive[2]=1;
+  f.adapter.beginActivity('Copper',snapshot.target);assert.equal(f.playerState._TargetEnemy,f.target);
+  f.attrs.BlockMovement=1;assert.equal(f.adapter.gatheringState(),null);
+});
+
+test('repeat gathering maps chopping, fishing and catching to their skill XP slots',()=>{
+  for(const [type,slot] of [['CHOPPIN',3],['FISHING',4],['CATCHING',6]]) {
+    const f=gameFixture();f.adapter.beginActivity('Copper');f.attrs.PlayerMoveMaps[0].h.Main=2;
+    f.attrs.MonsterDefinitionsGET.h.Copper.h.AFKtype=type;
+    f.attrs.Exp0=[0,100,200,300,400,500,600];f.attrs.Lv0=Array(7).fill(10);
+    assert.equal(f.adapter.gatheringState().xp,slot*100);
+  }
+});
+
 test('locked assignments and stale travel requests are rejected before teleporting',()=>{
   const f=gameFixture(),lists=f.attrs.CustomLists.h;
   lists.MapName=[];lists.MapName[6]='MininggA';lists.MapName[7]='MininggB';
@@ -353,7 +373,14 @@ test('menu assignment controls select a character, destination and resource',()=
   assert.equal(elements.rows.children.length,2);
   elements.rows.children[0].onclick();
   assert.equal(elements.resource.value,'Copper');assert.equal(elements['assignment-choice'].hidden,false);
+  f.attrs.Exp0=Array(7).fill(100);f.attrs.Lv0=Array(7).fill(10);
+  f.playerState._TargetEnemy=f.target;f.attrs.PlayerMoveMaps[0].h.Main=2;
+  elements.repeat.onclick();assert.equal(f.context.window.__romNavigation.repeatGathering.active,true);
+  assert.equal(elements.repeat.textContent,'Stop repeat gathering');
+  elements.repeat.onclick();assert.equal(f.context.window.__romNavigation.repeatGathering.active,false);
+  elements.repeat.onclick();
   elements['start-assignment'].onclick();
+  assert.equal(f.context.window.__romNavigation.repeatGathering.active,false);
   const job=f.context.window.__romNavigation.assignment.current;
   assert.equal(job.spec.character,'Miner');assert.equal(job.spec.resource,'Copper');assert.equal(job.spec.map,6);
   assert.equal(elements.mode.disabled,true);assert.equal(elements.cancel.hidden,false);

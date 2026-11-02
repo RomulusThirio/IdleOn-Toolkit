@@ -2,7 +2,7 @@
 
 Teleporting works; the new character assignments still need in-game testing. Please wait for a release if you want a stable build. Suggestions are welcome.
 
-# IdleOn Travel Menu
+# IdleOn Toolkit
 
 ## Download just one file
 
@@ -27,6 +27,12 @@ Only unlocked destinations are shown. Travel uses the active character's progres
 
 Assignment checks, loot handling, map access, nearest-resource selection, and UI controls are covered by automated tests.
 
+## Repeat gathering
+
+Start gathering in-game, open **IdleOn Toolkit**, and click **Start repeat gathering**. It checks the current skill's XP every 50 ms and interacts with the same resource after each XP gain. Mining, chopping, fishing, and catching are supported, including level-ups.
+
+Click **Stop repeat gathering** to stop. Moving away, changing characters or maps, opening a game dialog, or starting travel or an assignment also stops it. This runs only on the active character and starts off each time you launch the game. Whether it improves gathering speed still needs in-game testing.
+
 **This repository is private.** Recipients need repository access and GitHub authentication in Git (normally handled by Git Credential Manager included with Git for Windows). A downloaded launcher does not grant repository access. If Git reports “Repository not found,” check the signed-in account and repository permissions.
 
 ## Where files go
@@ -47,11 +53,11 @@ Commit changes to `menu.js` or `install.ps1` on `main`; recipients get them when
 
 `Update-IdleOn.bat` remains available as an equivalent standalone launcher for compatibility. `Install.bat` is the file to share. Launcher changes themselves require redistributing the launcher; menu and PowerShell installer updates are fetched automatically.
 
-Run the assignment tests with `node --test tests/assignment.test.cjs tests/maps.test.cjs`.
+Run the tests with `node --test tests/*.test.cjs`.
 
 ## Current menu limitations
 
-- Menu 0.2.4 is included. The return switch waits for a gathering drop and can leave it behind. The reported colosseum/enemy labeling correction is still pending.
+- Toolkit 0.3.0 is included. The return switch waits for a gathering drop and can leave it behind. The reported colosseum/enemy labeling correction is still pending.
 - Enemy labels use AFK map targets; special areas can display a surrounding area's enemy. Check the map name beneath each label.
 - World/location numbers are menu numbers, not official map IDs.
 - Travel mode only changes maps. Assignment mode starts gathering for mining, fishing, chopping, and catching; other skills remain travel-only.

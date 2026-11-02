@@ -1,7 +1,7 @@
 /* Injected inside the installed game's closure; uses its own map data. */
 (() => {
   if (window.__romNavigation) return;
-  window.__romNavigation = { version: '0.2.4' };
+  window.__romNavigation = { version: '0.3.0' };
   let pending = null;
   const clean = value => String(value == null ? '' : value).replace(/_/g, ' ');
   const get = key => a.engine && a.engine.getGameAttribute(key);
@@ -165,6 +165,41 @@
     };
   }
 
+  function createRepeatGathering(adapter, report, clock = () => Date.now()) {
+    let job=null;
+    const stop=message=>{job=null;report(message);};
+    return {
+      get active() { return !!job; },
+      start() {
+        const state=adapter.gatheringState();
+        if (!state?.gathering) throw new Error('Start mining, chopping, fishing, or catching first.');
+        job={...state,restarting:false};
+        report('Repeat gathering on: '+clean(state.name)+'.');
+      },
+      stop() { if(job) stop('Repeat gathering off.'); },
+      tick() {
+        if (!job) return;
+        try {
+          const state=adapter.gatheringState();
+          if (!state || state.character!==job.character || state.map!==job.map || state.target!==job.target || state.resource!==job.resource) {
+            stop('Repeat gathering stopped: character, map, or resource changed.');return;
+          }
+          if (!state.gathering) {
+            if (!job.restarting || state.movement===0 || clock()-job.restartedAt>=1000) stop('Repeat gathering stopped: gathering was interrupted.');
+            return;
+          }
+          job.restarting=false;
+          const gained=state.level>job.level || state.level===job.level && state.xp>job.xp;
+          job.level=state.level;job.xp=state.xp;
+          if (gained) {
+            if (!adapter.beginActivity(job.resource,job.target)) {stop('Repeat gathering stopped: resource unavailable.');return;}
+            job.restarting=true;job.restartedAt=clock();
+          }
+        } catch(error) { stop('Repeat gathering stopped: '+error.message); }
+      }
+    };
+  }
+
   function gameAdapter(report) {
     const alive = actor => actor && !actor.dead && !actor.recycled;
     const behavior = (actor, name) => {
@@ -263,7 +298,7 @@
         if (!availableMaps().has(map)) throw new Error('That destination is locked for the active character.');
         q._customBlock_Teleport(map);
       },
-      beginActivity(resource) {
+      beginActivity(resource, selectedTarget=null) {
         if (!canAct()) return false;
         if (!availableMaps().has(Number(get('CurrentMap')))) throw new Error('This map is locked for the active character.');
         const origin=player();
@@ -275,7 +310,7 @@
         };
         const target=(get('MapMonstersList') || []).filter(actor=>{
           const mob=behavior(actor,'ActorEvents_1');
-          return mob && mob._MonsterType===resource && Number(get('MonsterAlive')?.[mob._MonsterID])===1;
+          return (!selectedTarget || actor===selectedTarget) && mob && mob._MonsterType===resource && Number(get('MonsterAlive')?.[mob._MonsterID])===1;
         }).sort((left,right)=>distance(left)-distance(right))[0];
         if (!target) return false;
         const mob=behavior(target,'ActorEvents_1'), state=playerBehavior(), id=character(), movement=get('PlayerMoveMaps');
@@ -290,6 +325,17 @@
         movement[0].h[id]=state._PlayerNode===mob._MonsterNODE ? 1 : 0;
         v._customBlock_NetworkMove(player().getX(),Math.round(state._PlayerNode),state._MouseClickX,Math.round(mob._MonsterNODE));
         return true;
+      },
+      gatheringState() {
+        if (!canAct()) return null;
+        const state=playerBehavior(), target=state?._TargetEnemy, mob=behavior(target,'ActorEvents_1');
+        if (!mob || !(get('MapMonstersList') || []).includes(target) || Number(get('MonsterAlive')?.[mob._MonsterID])!==1) return null;
+        const def=get('MonsterDefinitionsGET')?.h?.[mob._MonsterType]?.h;
+        const skill={MINING:1,CHOPPIN:3,CHOPPING:3,FISHING:4,CATCHING:6}[def?.AFKtype];
+        const xp=get('Exp0')?.[skill], level=get('Lv0')?.[skill];
+        if (!skill || xp==null || level==null || !Number.isFinite(Number(xp)) || !Number.isFinite(Number(level))) return null;
+        return {character:character(),map:Number(get('CurrentMap')),target,resource:mob._MonsterType,name:def.Name || mob._MonsterType,
+          xp:Number(xp),level:Number(level),movement:Number(get('PlayerMoveMaps')?.[0]?.h?.[character()]),gathering:this.activityStarted(mob._MonsterType)};
       },
       activityStarted(resource) {
         if (!loaded() || afk()) return false;
@@ -308,12 +354,25 @@
     const root = host.attachShadow({mode:'open'});
     root.innerHTML = `<style>
       *{box-sizing:border-box}button,input,select{font:inherit}button{cursor:pointer;background:#25446b;color:white;border:1px solid #53749a;border-radius:7px;padding:8px}button:disabled{opacity:.45;cursor:default}
-      #panel{width:345px;max-height:85vh;background:#111d2e;color:#eaf2ff;border:1px solid #53749a;border-radius:12px;padding:14px;box-shadow:0 8px 30px #0009}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}h2{font-size:18px;margin:0}input,select{width:100%;background:#0a1422;color:#fff;border:1px solid #4c6482;border-radius:6px;padding:9px;margin-bottom:9px}#rows{overflow:auto;max-height:45vh}.row{display:block;text-align:left;width:100%;margin:5px 0}.row small{display:block;margin-top:4px;color:#bdd0e6}#status{line-height:1.4;margin:10px 0;color:#bdcfe4;font-size:12px}footer{font-size:11px;color:#91a7c0;margin-top:9px}#cancel{width:100%}[hidden]{display:none!important}
-      </style><button id="open">Travel menu · F8</button><section id="panel" hidden><header><h2>Travel menu</h2><button id="close" aria-label="Close">×</button></header><select id="mode" aria-label="Travel or assign activity"><option value="travel">Travel</option><option value="assign">Assign activity and return</option></select><select id="character" aria-label="Character" hidden></select><input id="search" placeholder="Search destinations or codes…" aria-label="Search destinations or codes"><select id="world" aria-label="World"><option value="">All worlds</option>${[1,2,3,4,5,6,7].map(w=>`<option value="${w}">World ${w}</option>`).join('')}</select><div id="assignment-choice" hidden><div id="chosen"></div><select id="resource" aria-label="Resource"></select><button id="start-assignment">Start assignment</button></div><div id="rows"></div><div id="status">Waiting for your character…</div><button id="cancel" hidden>Cancel</button><footer>Only destinations unlocked for the selected character are shown.</footer></section>`;
+      #panel{width:345px;max-height:85vh;background:#111d2e;color:#eaf2ff;border:1px solid #53749a;border-radius:12px;padding:14px;box-shadow:0 8px 30px #0009}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}h2{font-size:18px;margin:0}input,select{width:100%;background:#0a1422;color:#fff;border:1px solid #4c6482;border-radius:6px;padding:9px;margin-bottom:9px}#rows{overflow:auto;max-height:45vh}.row{display:block;text-align:left;width:100%;margin:5px 0}.row small{display:block;margin-top:4px;color:#bdd0e6}#status{line-height:1.4;margin:10px 0;color:#bdcfe4;font-size:12px}footer{font-size:11px;color:#91a7c0;margin-top:9px}#cancel,#repeat{width:100%}#repeat-status{font-size:12px;line-height:1.4;margin:8px 0;color:#bdcfe4}[hidden]{display:none!important}
+      </style><button id="open">IdleOn Toolkit · F8</button><section id="panel" hidden><header><h2>IdleOn Toolkit</h2><button id="close" aria-label="Close">×</button></header><select id="mode" aria-label="Travel or assign activity"><option value="travel">Travel</option><option value="assign">Assign activity and return</option></select><select id="character" aria-label="Character" hidden></select><input id="search" placeholder="Search destinations or codes…" aria-label="Search destinations or codes"><select id="world" aria-label="World"><option value="">All worlds</option>${[1,2,3,4,5,6,7].map(w=>`<option value="${w}">World ${w}</option>`).join('')}</select><div id="assignment-choice" hidden><div id="chosen"></div><select id="resource" aria-label="Resource"></select><button id="start-assignment">Start assignment</button></div><button id="repeat" type="button">Start repeat gathering</button><div id="repeat-status" role="status">Interact again after each skill XP gain.</div><div id="rows"></div><div id="status">Waiting for your character…</div><button id="cancel" hidden>Cancel</button><footer>Only destinations unlocked for the selected character are shown.</footer></section>`;
     const el = id => root.getElementById(id);
     const status = message => { el('status').textContent = message; };
     let taskMessage = '', selectedRow = null, displayedOwner = '';
-    const assignment = createAssignment(gameAdapter(message => { taskMessage=message; status(message); }));
+    const adapter=gameAdapter(message => { taskMessage=message; status(message); });
+    const assignment = createAssignment(adapter);
+    const repeat=createRepeatGathering(adapter,message=>{
+      el('repeat-status').textContent=message;
+      el('repeat').textContent=repeat.active ? 'Stop repeat gathering' : 'Start repeat gathering';
+    });
+    window.__romNavigation.repeatGathering=repeat;
+    el('repeat').onclick=()=>{
+      if (repeat.active) repeat.stop();
+      else if (!pending && !assignment.current) {
+        try {repeat.start();} catch(error) {el('repeat-status').textContent=error.message;}
+      }
+    };
+    setInterval(()=>repeat.tick(),50);
     window.__romNavigation.assignment=assignment;
     function refreshCharacters() {
       const names=get('GetPlayersUsernames') || [], selected=el('character').value;
@@ -340,6 +399,7 @@
       if (!selectedRow || pending || assignment.current) return;
       const resource=el('resource').value;
       try {
+        repeat.stop();
         assignment.start({character:el('character').value,map:selectedRow.map,location:selectedRow.location,resource,resourceName:clean(get('MonsterDefinitionsGET')?.h?.[resource]?.h?.Name || resource)});
         el('assignment-choice').hidden=true; render(); status(taskMessage);
       } catch(error) { status(error.message); }
@@ -415,7 +475,7 @@
       try {
         refreshCharacters();
         const busy=!!(pending || assignment.current);
-        ['mode','character','search','world','resource','start-assignment'].forEach(id=>{el(id).disabled=busy;});
+        ['mode','character','search','world','resource','start-assignment','repeat'].forEach(id=>{el(id).disabled=busy;});
         el('cancel').hidden=!busy;
         const all=entries(), query=el('search').value.trim().toLowerCase(), world=Number(el('world').value);
         const owner=el('mode').value==='assign' ? el('character').value : String((get('UserInfo') || [])[0] || '');
@@ -435,6 +495,7 @@
       if(pending || assignment.current || !ready())return;
       if(!availableMaps().has(row.map)){render();status('That destination is locked for this character.');return;}
       if(Number(get('CurrentMap'))===row.map){status('You are already on this map.');return;}
+      repeat.stop();
       pending={row,started:Date.now(),issued:false};el('cancel').hidden=false;render();status('Preparing travel to '+row.name+'…');
     }
     el('cancel').onclick=()=>{if(assignment.current){assignment.cancel();render();status(taskMessage);}else{pending=null;render();status('Pending request canceled. A transition already started will finish.');}};
