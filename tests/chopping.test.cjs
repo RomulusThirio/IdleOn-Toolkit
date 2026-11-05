@@ -73,4 +73,3 @@ test('game adapter rejects the same model outside the chopping screen',()=>{
   const gameAdapter=vm.runInNewContext(adapterSource+';gameAdapter',context), adapter=gameAdapter(()=>{});
   assert.equal(adapter.choppingState().active,false);assert.throws(()=>adapter.choppingTap(),/not ready/);
 });
-

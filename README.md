@@ -74,4 +74,3 @@ Run the tests with `node --test tests/*.test.cjs`.
 - A game update may require adapting the internal game references.
 
 The repository contains custom tools only, not game files or account data.
-
