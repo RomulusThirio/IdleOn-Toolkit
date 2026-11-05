@@ -200,7 +200,7 @@
     };
   }
 
-  function createChoppingMinigame(adapter, report) {
+  function createChoppingMinigame(adapter, report, clock = () => Date.now()) {
     let job=null;
     const stop=message=>{job=null;report(message);};
     const preferredTarget=state=>state.targets.find(target=>target.perfect) || state.targets[0];
@@ -210,7 +210,7 @@
         const state=adapter.choppingState();
         if (!state?.active) throw new Error('Open and start the chopping minigame first.');
         if (!state.valid) throw new Error('The chopping bar state is incomplete or ambiguous.');
-        job={lastTapCount:state.tapCount,lastTapPosition:null};
+        job={lastTapCount:state.tapCount,lastTapPosition:null,postHitUntil:0};
         report('Chopping helper on. Watching the live bar and using native taps.');
       },
       stop() { if(job) stop('Chopping helper off.'); },
@@ -219,6 +219,7 @@
         try {
           const state=adapter.choppingState();
           if (!state?.active) {stop('Chopping helper stopped: the chopping minigame closed or changed.');return;}
+          if (clock()<job.postHitUntil) return;
           if (!state.valid) {stop('Chopping helper stopped: the bar state became ambiguous.');return;}
           if (state.result===1) {stop('Chopping helper stopped after a missed tap.');return;}
           if (!state.moving || state.result!==0) return;
@@ -230,6 +231,7 @@
           adapter.choppingTap();
           job.lastTapCount=state.tapCount;
           job.lastTapPosition=state.position;
+          job.postHitUntil=clock()+50;
           report('Chopping helper active. Native tap '+(state.tapCount+1)+' on '+(target.perfect?'perfect':'scoring')+' target.');
         } catch(error) { stop('Chopping helper stopped: '+error.message); }
       }

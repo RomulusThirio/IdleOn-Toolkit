@@ -9,12 +9,13 @@ const create=vm.runInNewContext(controllerSource+';createChoppingMinigame');
 const adapterSource=source.slice(source.indexOf('function gameAdapter('),source.indexOf('function mount('));
 
 function fixture() {
+  let now=0;
   const state={active:true,valid:true,position:10,direction:1,speed:2,score:0,result:0,tapCount:0,moving:true,
     targets:[{start:50,end:170,perfect:false}]};
   const calls=[],messages=[];
   const controller=create({choppingState:()=>({...state,targets:state.targets.map(target=>({...target}))}),
-    choppingTap:()=>calls.push(state.position)},message=>messages.push(message));
-  return {state,calls,messages,controller,tick:()=>controller.tick()};
+    choppingTap:()=>calls.push(state.position)},message=>messages.push(message),()=>now);
+  return {state,calls,messages,controller,tick:(ms=0)=>{now+=ms;controller.tick();}};
 }
 
 test('start requires an active, unambiguous chopping screen',()=>{
@@ -35,7 +36,15 @@ test('prefers the perfect target when one is visible',()=>{
 
 test('does not repeat a tap on the same unchanged frame',()=>{
   const f=fixture();f.state.position=60;f.controller.start();f.tick();f.tick();assert.equal(f.calls.length,1);
-  f.state.tapCount++;f.state.position=61;f.tick();assert.equal(f.calls.length,2);
+  f.state.tapCount++;f.state.position=61;f.tick(50);assert.equal(f.calls.length,2);
+});
+
+test('allows the native bar a 50 ms post-hit transition before ambiguity checks',()=>{
+  const f=fixture();f.state.position=60;f.controller.start();f.tick();
+  f.state.valid=false;f.state.moving=false;f.state.direction=0;f.tick(49);
+  assert.equal(f.controller.active,true);assert.equal(f.calls.length,1);
+  f.state.valid=true;f.state.moving=true;f.state.direction=1;f.state.tapCount++;f.state.position=20;f.tick(1);
+  assert.equal(f.controller.active,true);assert.equal(f.calls.length,1);
 });
 
 test('stops without tapping when the screen closes or becomes ambiguous',()=>{
