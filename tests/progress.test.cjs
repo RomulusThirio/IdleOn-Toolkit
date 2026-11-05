@@ -10,7 +10,7 @@ const adapterSource=source.slice(source.indexOf('function gameAdapter('),source.
 
 function fixture() {
   let now=0,reads=0;
-  const state={valid:true,map:6,location:'Tunnels Entrance',destination:7,destinationName:'Freefall Caverns',remaining:3,open:false,atPortal:false,autoCombat:false};
+  const state={valid:true,transitioning:false,map:6,location:'Tunnels Entrance',destination:7,destinationName:'Freefall Caverns',remaining:3,open:false,atPortal:false,autoCombat:false};
   const calls=[],messages=[];
   const adapter={progressionState:()=>{reads++;return {...state};},moveToNextPortal:s=>calls.push(['move',s.map,s.destination]),enterNextPortal:s=>calls.push(['enter',s.map,s.destination]),enableAutoCombat:s=>calls.push(['auto',s.map])};
   const controller=create(adapter,message=>messages.push(message),()=>now);
@@ -25,7 +25,9 @@ test('waits for the forward portal kill count without turning off',()=>{
 test('moves normally when unlocked, enters at the portal, then waits one second',()=>{
   const f=fixture();f.controller.start();f.state.remaining=0;f.state.open=true;f.tick();
   assert.deepEqual(f.calls,[['move',6,7]]);f.state.atPortal=true;f.tick();assert.deepEqual(f.calls.at(-1),['enter',6,7]);
-  const reads=f.reads();f.state.map=7;f.state.location='Freefall Caverns';f.state.destination=8;f.state.destinationName='The Base of the Bark';f.state.remaining=9;f.state.atPortal=false;f.state.open=false;
+  f.state.valid=false;f.state.transitioning=true;f.tick(5000);assert.equal(f.controller.active,true);
+  f.state.valid=true;f.state.transitioning=false;f.state.map=7;f.state.location='Freefall Caverns';f.state.destination=8;f.state.destinationName='The Base of the Bark';f.state.remaining=9;f.state.atPortal=false;f.state.open=false;
+  f.tick();assert.match(f.messages.at(-1),/Waiting 1 second/);const reads=f.reads();
   f.tick(999);assert.equal(f.reads(),reads);f.tick(1);assert.equal(f.reads(),reads+1);
   assert.equal(f.controller.active,true);assert.deepEqual(f.calls.at(-1),['auto',7]);assert.match(f.messages.at(-1),/Auto combat on.*9 kills remaining/);
 });
@@ -33,7 +35,7 @@ test('moves normally when unlocked, enters at the portal, then waits one second'
 test('does not toggle Auto combat when it is already on after arrival',()=>{
   const f=fixture();f.controller.start();f.state.remaining=0;f.state.open=true;f.tick();f.state.atPortal=true;f.tick();
   f.state.map=7;f.state.destination=8;f.state.destinationName='The Base of the Bark';f.state.remaining=4;f.state.open=false;f.state.autoCombat=true;
-  f.tick(1000);assert.equal(f.calls.filter(call=>call[0]==='auto').length,0);assert.match(f.messages.at(-1),/4 kills remaining/);
+  f.tick();f.tick(1000);assert.equal(f.calls.filter(call=>call[0]==='auto').length,0);assert.match(f.messages.at(-1),/4 kills remaining/);
 });
 
 test('an unexpected map change is an error',()=>{

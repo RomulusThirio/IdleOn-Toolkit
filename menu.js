@@ -209,7 +209,7 @@
       start() {
         const state=adapter.progressionState();
         if (!state?.valid) throw new Error(state?.reason || 'The next-area portal state is unavailable.');
-        job={map:state.map,phase:'waiting',expectedDestination:null,moveStartedAt:0,checkAt:0,lastRemaining:null};
+        job={map:state.map,phase:'waiting',expectedDestination:null,moveStartedAt:0,enterStartedAt:0,checkAt:0,lastRemaining:null};
         report(state.remaining>0 ? 'Auto progress on. '+describe(state) : 'Auto progress on. The next portal is unlocked.');
       },
       stop() { if(job) stop('Auto progress off.'); },
@@ -218,10 +218,21 @@
         try {
           if (job.phase==='cooldown' && clock()<job.checkAt) return;
           const state=adapter.progressionState();
+          if (job.phase==='entering' && state?.transitioning) return;
           if (!state?.valid) throw new Error(state?.reason || 'The next-area portal state became unavailable.');
+          if (job.phase==='entering') {
+            if (state.map===job.expectedDestination) {
+              job.phase='cooldown';job.checkAt=clock()+1000;
+              report('Arrived at '+state.location+'. Waiting 1 second before checking again.');
+              return;
+            }
+            if (state.map!==job.map) throw new Error('The character entered an unexpected area.');
+            if (clock()-job.enterStartedAt>=30000) throw new Error('The next area did not load within 30 seconds.');
+            return;
+          }
           if (job.phase==='cooldown') {
-            if (state.map!==job.expectedDestination) throw new Error('The expected area did not load within 1 second.');
-            job={map:state.map,phase:'waiting',expectedDestination:null,moveStartedAt:0,checkAt:0,lastRemaining:null};
+            if (state.map!==job.expectedDestination) throw new Error('The active area changed during the 1-second wait.');
+            job={map:state.map,phase:'waiting',expectedDestination:null,moveStartedAt:0,enterStartedAt:0,checkAt:0,lastRemaining:null};
             if (state.remaining>0 && !state.autoCombat) {
               adapter.enableAutoCombat(state);
               job.lastRemaining=state.remaining;
@@ -253,8 +264,8 @@
             if (clock()-job.moveStartedAt>=30000) throw new Error('Could not reach the forward portal within 30 seconds.');
             if (!state.atPortal) return;
             adapter.enterNextPortal(state);
-            job.phase='cooldown';job.checkAt=clock()+1000;
-            report('Entering '+state.destinationName+'. Waiting 1 second before checking again.');
+            job.phase='entering';job.enterStartedAt=clock();
+            report('Entering '+state.destinationName+'…');
           }
         } catch(error) { stop('Auto progress stopped: '+error.message); }
       }
@@ -439,7 +450,8 @@
       progressionState() {
         const map=Number(get('CurrentMap')), lists=get('CustomLists')?.h, transitions=lists?.SceneTransitions?.[map];
         const fail=reason=>({valid:false,reason,map});
-        if (!loaded() || afk() || c.isTransitioning()) return fail('Finish loading and close game dialogs before using Auto progress.');
+        if (c.isTransitioning()) return {...fail('The area transition is still in progress.'),transitioning:true};
+        if (!loaded() || afk()) return fail('Finish loading and close game dialogs before using Auto progress.');
         if (!Array.isArray(transitions) || !Array.isArray(transitions[1])) return fail('This area has no ordinary forward portal.');
         const node=Number(transitions[1][0]), destination=lists.MapName?.indexOf(transitions[1][1]);
         const remaining=Number(get('KillsLeft2Advance')?.[map]?.[0]);
