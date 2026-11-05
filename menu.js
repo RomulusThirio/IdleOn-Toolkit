@@ -1,7 +1,7 @@
 /* Injected inside the installed game's closure; uses its own map data. */
 (() => {
   if (window.__romNavigation) return;
-  window.__romNavigation = { version: '0.4.0' };
+  window.__romNavigation = { version: '0.5.0' };
   let pending = null;
   const clean = value => String(value == null ? '' : value).replace(/_/g, ' ');
   const get = key => a.engine && a.engine.getGameAttribute(key);
@@ -200,6 +200,61 @@
     };
   }
 
+  function createAutoProgress(adapter, report, clock = () => Date.now()) {
+    let job=null;
+    const stop=message=>{job=null;report(message);};
+    const describe=state=>state.remaining===1 ? '1 kill remaining before '+state.destinationName+'.' : state.remaining+' kills remaining before '+state.destinationName+'.';
+    return {
+      get active() { return !!job; },
+      start() {
+        const state=adapter.progressionState();
+        if (!state?.valid) throw new Error(state?.reason || 'The next-area portal state is unavailable.');
+        job={map:state.map,phase:'waiting',expectedDestination:null,moveStartedAt:0,checkAt:0,lastRemaining:null};
+        report(state.remaining>0 ? 'Auto progress on. '+describe(state) : 'Auto progress on. The next portal is unlocked.');
+      },
+      stop() { if(job) stop('Auto progress off.'); },
+      tick() {
+        if (!job) return;
+        try {
+          if (job.phase==='cooldown' && clock()<job.checkAt) return;
+          const state=adapter.progressionState();
+          if (!state?.valid) throw new Error(state?.reason || 'The next-area portal state became unavailable.');
+          if (job.phase==='cooldown') {
+            if (state.map!==job.expectedDestination) throw new Error('The expected area did not load within 10 seconds.');
+            job={map:state.map,phase:'waiting',expectedDestination:null,moveStartedAt:0,checkAt:0,lastRemaining:null};
+            report('Arrived at '+state.location+'. Checking the next portal.');
+          } else if (state.map!==job.map) {
+            if (job.phase==='moving' && state.map===job.expectedDestination) {
+              job.phase='cooldown';job.checkAt=clock()+10000;
+              report('Arrived at '+state.location+'. Waiting 10 seconds before checking again.');
+              return;
+            }
+            throw new Error('The active map changed unexpectedly.');
+          }
+          if (state.remaining>0) {
+            job.phase='waiting';job.expectedDestination=null;
+            if (state.remaining!==job.lastRemaining) {job.lastRemaining=state.remaining;report(describe(state));}
+            return;
+          }
+          if (!state.open) throw new Error('The kill count is complete, but the forward portal is still locked.');
+          if (job.phase==='waiting') {
+            adapter.moveToNextPortal(state);
+            job.phase='moving';job.expectedDestination=state.destination;job.moveStartedAt=clock();job.lastRemaining=0;
+            report('Portal unlocked. Moving to '+state.destinationName+'…');
+            return;
+          }
+          if (job.phase==='moving') {
+            if (clock()-job.moveStartedAt>=30000) throw new Error('Could not reach the forward portal within 30 seconds.');
+            if (!state.atPortal) return;
+            adapter.enterNextPortal(state);
+            job.phase='cooldown';job.checkAt=clock()+10000;
+            report('Entering '+state.destinationName+'. Waiting 10 seconds before checking again.');
+          }
+        } catch(error) { stop('Auto progress stopped: '+error.message); }
+      }
+    };
+  }
+
   function createChoppingMinigame(adapter, report, clock = () => Date.now()) {
     let job=null;
     const stop=message=>{job=null;report(message);};
@@ -375,6 +430,48 @@
         return {character:character(),map:Number(get('CurrentMap')),target,resource:mob._MonsterType,name:def.Name || mob._MonsterType,
           xp:Number(xp),level:Number(level),movement:Number(get('PlayerMoveMaps')?.[0]?.h?.[character()]),gathering:this.activityStarted(mob._MonsterType)};
       },
+      progressionState() {
+        const map=Number(get('CurrentMap')), lists=get('CustomLists')?.h, transitions=lists?.SceneTransitions?.[map];
+        const fail=reason=>({valid:false,reason,map});
+        if (!loaded() || afk() || c.isTransitioning()) return fail('Finish loading and close game dialogs before using Auto progress.');
+        if (!Array.isArray(transitions) || !Array.isArray(transitions[1])) return fail('This area has no ordinary forward portal.');
+        const node=Number(transitions[1][0]), destination=lists.MapName?.indexOf(transitions[1][1]);
+        const remaining=Number(get('KillsLeft2Advance')?.[map]?.[0]);
+        if (!Number.isInteger(destination) || destination<0 || !Number.isInteger(node) || node<0 || !Number.isFinite(remaining)) return fail('The forward portal data is incomplete.');
+        const portal=actors(47).find(actor=>{
+          const state=behavior(actor,'ActorEvents_47');
+          return state && Number(state._isEtcPortal)===0 && Number(state._PortalID)===0;
+        });
+        if (!portal) return fail('The forward portal actor is unavailable.');
+        const state=playerBehavior(), actor=player(), x=Number(get('NodeX')?.[node]), y=Number(get('NodeY')?.[node]);
+        const playerY=Number(get('NodeY')?.[Number(state?._PlayerNode)]);
+        if (!state || !actor || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(playerY)) return fail('The portal path is unavailable.');
+        const open=typeof m?._customBlock_Windwalker==='function' && m._customBlock_Windwalker('CanWeEnterPortal',map,0)===1;
+        return {valid:true,map,location:clean(lists.MapDispName?.[map] || lists.MapName?.[map] || map),destination,
+          destinationName:clean(lists.MapDispName?.[destination] || transitions[1][1]),remaining:Math.max(0,Math.ceil(remaining)),
+          open,node,x,portal,atPortal:Math.abs(x-actor.getXCenter())<50 && Math.abs(y-playerY)<25};
+      },
+      moveToNextPortal(snapshot) {
+        const current=this.progressionState();
+        if (!current.valid || current.map!==snapshot.map || current.destination!==snapshot.destination || current.remaining>0 || !current.open) throw new Error('The forward portal changed before movement began.');
+        if (!canAct()) throw new Error('The character cannot move while a dialog or transition is active.');
+        const state=playerBehavior(), movement=get('PlayerMoveMaps'), id=character();
+        if (!state || !movement?.[0]?.h || !movement?.[1]?.h || !movement?.[2]?.h) throw new Error('Movement data is unavailable.');
+        a.engine.setGameAttribute('ActionTimer',0);
+        a.engine.setGameAttribute('MenuType',0);a.engine.setGameAttribute('MenuType2',0);
+        a.engine.setGameAttribute('PlayerAutoMoveTOGGLE',0);a.engine.setGameAttribute('PortalSelectedArrow',-1);
+        state._TargetEnemy=null;state._TargetEnemyTEMP=null;state._MouseClickX=current.x;
+        movement[1].h[id]=0;movement[2].h[id]=current.node;movement[0].h[id]=Number(state._PlayerNode)===current.node ? 1 : 0;
+        v._customBlock_NetworkMove(player().getX(),Math.round(state._PlayerNode),current.x,current.node);
+      },
+      enterNextPortal(snapshot) {
+        const current=this.progressionState();
+        if (!current.valid || current.map!==snapshot.map || current.destination!==snapshot.destination || !current.open || !current.atPortal) throw new Error('The character is not at the unlocked forward portal.');
+        const movement=get('PlayerMoveMaps'), id=character();
+        if (!movement?.[0]?.h || !movement?.[1]?.h || !movement?.[2]?.h) throw new Error('Movement data is unavailable.');
+        movement[0].h[id]=5;movement[1].h[id]=0;movement[2].h[id]=current.node;
+        a.engine.setGameAttribute('BlockMovement',.5);
+      },
       choppingState() {
         const helper=behavior(get('PixelHelperActor')?.[1],'ActorEvents_116');
         const info=helper?._GeneralINFO, bar=info?.[7], animation=String(player()?.getAnimation?.() ?? '');
@@ -419,36 +516,40 @@
     const root = host.attachShadow({mode:'open'});
     root.innerHTML = `<style>
       *{box-sizing:border-box}button,input,select{font:inherit}button{cursor:pointer;background:#25446b;color:white;border:1px solid #53749a;border-radius:7px;padding:8px}button:disabled{opacity:.45;cursor:default}
-      #panel{width:345px;max-height:85vh;background:#111d2e;color:#eaf2ff;border:1px solid #53749a;border-radius:12px;padding:14px;box-shadow:0 8px 30px #0009}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}h2{font-size:18px;margin:0}input,select{width:100%;background:#0a1422;color:#fff;border:1px solid #4c6482;border-radius:6px;padding:9px;margin-bottom:9px}#rows{overflow:auto;max-height:45vh}.row{display:block;text-align:left;width:100%;margin:5px 0}.row small{display:block;margin-top:4px;color:#bdd0e6}#status{line-height:1.4;margin:10px 0;color:#bdcfe4;font-size:12px}footer{font-size:11px;color:#91a7c0;margin-top:9px}#cancel,#repeat,#chopping{width:100%}#repeat-status,#chopping-status{font-size:12px;line-height:1.4;margin:8px 0;color:#bdcfe4}[hidden]{display:none!important}
-      </style><button id="open">IdleOn Toolkit · F8</button><section id="panel" hidden><header><h2>IdleOn Toolkit</h2><button id="close" aria-label="Close">×</button></header><select id="mode" aria-label="Travel or assign activity"><option value="travel">Travel</option><option value="assign">Assign activity and return</option></select><select id="character" aria-label="Character" hidden></select><input id="search" placeholder="Search destinations or codes…" aria-label="Search destinations or codes"><select id="world" aria-label="World"><option value="">All worlds</option>${[1,2,3,4,5,6,7].map(w=>`<option value="${w}">World ${w}</option>`).join('')}</select><div id="assignment-choice" hidden><div id="chosen"></div><select id="resource" aria-label="Resource"></select><button id="start-assignment">Start assignment</button></div><button id="repeat" type="button">Start repeat gathering</button><div id="repeat-status" role="status">Interact again after each skill XP gain.</div><button id="chopping" type="button">Start chopping helper</button><div id="chopping-status" role="status">Open and start chopping, then enable the helper.</div><div id="rows"></div><div id="status">Waiting for your character…</div><button id="cancel" hidden>Cancel</button><footer>Only destinations unlocked for the selected character are shown.</footer></section>`;
+      #panel{width:345px;max-height:85vh;background:#111d2e;color:#eaf2ff;border:1px solid #53749a;border-radius:12px;padding:14px;box-shadow:0 8px 30px #0009}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}h2{font-size:18px;margin:0}input,select{width:100%;background:#0a1422;color:#fff;border:1px solid #4c6482;border-radius:6px;padding:9px;margin-bottom:9px}#rows{overflow:auto;max-height:45vh}.row{display:block;text-align:left;width:100%;margin:5px 0}.row small{display:block;margin-top:4px;color:#bdd0e6}#status{line-height:1.4;margin:10px 0;color:#bdcfe4;font-size:12px}footer{font-size:11px;color:#91a7c0;margin-top:9px}#cancel,#automation-toggle{width:100%}#automation-status{font-size:12px;line-height:1.4;margin:8px 0;color:#bdcfe4}[hidden]{display:none!important}
+      </style><button id="open">IdleOn Toolkit · F8</button><section id="panel" hidden><header><h2>IdleOn Toolkit</h2><button id="close" aria-label="Close">×</button></header><select id="mode" aria-label="Travel or assign activity"><option value="travel">Travel</option><option value="assign">Assign activity and return</option></select><select id="character" aria-label="Character" hidden></select><input id="search" placeholder="Search destinations or codes…" aria-label="Search destinations or codes"><select id="world" aria-label="World"><option value="">All worlds</option>${[1,2,3,4,5,6,7].map(w=>`<option value="${w}">World ${w}</option>`).join('')}</select><div id="assignment-choice" hidden><div id="chosen"></div><select id="resource" aria-label="Resource"></select><button id="start-assignment">Start assignment</button></div><select id="automation" aria-label="Automation"><option value="progress">Auto progress</option><option value="repeat">Repeat gathering</option><option value="chopping">Chopping helper</option></select><button id="automation-toggle" type="button">Start Auto progress</button><div id="automation-status" role="status">Choose an automation. Only one runs at a time.</div><div id="rows"></div><div id="status">Waiting for your character…</div><button id="cancel" hidden>Cancel</button><footer>Only destinations unlocked for the selected character are shown.</footer></section>`;
     const el = id => root.getElementById(id);
     const status = message => { el('status').textContent = message; };
     let taskMessage = '', selectedRow = null, displayedOwner = '';
     const adapter=gameAdapter(message => { taskMessage=message; status(message); });
     const assignment = createAssignment(adapter);
-    const repeat=createRepeatGathering(adapter,message=>{
-      el('repeat-status').textContent=message;
-      el('repeat').textContent=repeat.active ? 'Stop repeat gathering' : 'Start repeat gathering';
-    });
-    const chopping=createChoppingMinigame(adapter,message=>{
-      el('chopping-status').textContent=message;
-      el('chopping').textContent=chopping.active ? 'Stop chopping helper' : 'Start chopping helper';
-    });
+    const automationReport=message=>{el('automation-status').textContent=message;updateAutomationControls();if(!el('panel').hidden)render();};
+    const repeat=createRepeatGathering(adapter,automationReport);
+    const chopping=createChoppingMinigame(adapter,automationReport);
+    const progress=createAutoProgress(adapter,automationReport);
+    const automations={progress:{label:'Auto progress',controller:progress},repeat:{label:'Repeat gathering',controller:repeat},chopping:{label:'Chopping helper',controller:chopping}};
+    const activeAutomation=()=>Object.values(automations).find(item=>item.controller.active);
+    function updateAutomationControls() {
+      const active=activeAutomation(), selected=automations[el('automation').value] || automations.progress;
+      el('automation').disabled=!!active || !!pending || !!assignment.current;
+      el('automation-toggle').disabled=!!pending || !!assignment.current;
+      el('automation-toggle').textContent=(active?'Stop ':'Start ')+(active?.label || selected.label);
+    }
     window.__romNavigation.repeatGathering=repeat;
     window.__romNavigation.choppingMinigame=chopping;
-    el('repeat').onclick=()=>{
-      if (repeat.active) repeat.stop();
+    window.__romNavigation.autoProgress=progress;
+    el('automation').onchange=updateAutomationControls;
+    el('automation-toggle').onclick=()=>{
+      const active=activeAutomation();
+      if (active) active.controller.stop();
       else if (!pending && !assignment.current) {
-        try {repeat.start();} catch(error) {el('repeat-status').textContent=error.message;}
+        const selected=automations[el('automation').value] || automations.progress;
+        try {selected.controller.start();} catch(error) {el('automation-status').textContent=error.message;}
       }
-    };
-    el('chopping').onclick=()=>{
-      if (chopping.active) chopping.stop();
-      else if (!pending && !assignment.current) {
-        try {repeat.stop();chopping.start();} catch(error) {el('chopping-status').textContent=error.message;}
-      }
+      updateAutomationControls();render();
     };
     setInterval(()=>repeat.tick(),50);
+    setInterval(()=>progress.tick(),250);
     if (typeof requestAnimationFrame==='function') {
       const choppingFrame=()=>{chopping.tick();requestAnimationFrame(choppingFrame);};
       requestAnimationFrame(choppingFrame);
@@ -479,7 +580,7 @@
       if (!selectedRow || pending || assignment.current) return;
       const resource=el('resource').value;
       try {
-        repeat.stop();
+        const active=activeAutomation();if(active)active.controller.stop();
         assignment.start({character:el('character').value,map:selectedRow.map,location:selectedRow.location,resource,resourceName:clean(get('MonsterDefinitionsGET')?.h?.[resource]?.h?.Name || resource)});
         el('assignment-choice').hidden=true; render(); status(taskMessage);
       } catch(error) { status(error.message); }
@@ -554,9 +655,9 @@
     function render() {
       try {
         refreshCharacters();
-        const taskBusy=!!(pending || assignment.current), busy=taskBusy || chopping.active;
-        ['mode','character','search','world','resource','start-assignment','repeat'].forEach(id=>{el(id).disabled=busy;});
-        el('chopping').disabled=taskBusy;
+        const taskBusy=!!(pending || assignment.current), busy=taskBusy || !!activeAutomation();
+        ['mode','character','search','world','resource','start-assignment'].forEach(id=>{el(id).disabled=busy;});
+        updateAutomationControls();
         el('cancel').hidden=!taskBusy;
         const all=entries(), query=el('search').value.trim().toLowerCase(), world=Number(el('world').value);
         const owner=el('mode').value==='assign' ? el('character').value : String((get('UserInfo') || [])[0] || '');
@@ -573,10 +674,9 @@
       } catch(error) { status('Waiting for game data: '+error.message); }
     }
     function travel(row) {
-      if(pending || assignment.current || chopping.active || !ready())return;
+      if(pending || assignment.current || activeAutomation() || !ready())return;
       if(!availableMaps().has(row.map)){render();status('That destination is locked for this character.');return;}
       if(Number(get('CurrentMap'))===row.map){status('You are already on this map.');return;}
-      repeat.stop();
       pending={row,started:Date.now(),issued:false};el('cancel').hidden=false;render();status('Preparing travel to '+row.name+'…');
     }
     el('cancel').onclick=()=>{if(assignment.current){assignment.cancel();render();status(taskMessage);}else{pending=null;render();status('Pending request canceled. A transition already started will finish.');}};

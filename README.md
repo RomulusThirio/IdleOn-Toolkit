@@ -27,15 +27,25 @@ Only unlocked destinations are shown. Travel uses the active character's progres
 
 Assignment checks, loot handling, map access, nearest-resource selection, and UI controls are covered by automated tests.
 
-## Repeat gathering
+## Automation
 
-Start gathering in-game, open **IdleOn Toolkit**, and click **Start repeat gathering**. It checks the current skill's XP every 50 ms and interacts with the same resource after each XP gain. Mining, chopping, fishing, and catching are supported, including level-ups.
+The **Automation** dropdown groups Auto progress, Repeat gathering, and the Chopping helper. Only one automation can run at a time. Select one and use the button beneath the dropdown to start or stop it.
+
+### Auto progress
+
+Select **Auto progress** and click **Start Auto progress** while the active character is fighting in an ordinary area. The toolkit monitors the remaining kill requirement for the main forward portal. When it reaches zero, the character walks to the real portal using ordinary path movement, enters it, waits 10 seconds for the new area to settle, and begins monitoring that area's forward portal.
+
+Auto progress remains enabled until you stop it or an error occurs. It does not start combat, choose talents, use teleportation, or guess between branching exits; it follows portal slot zero, which is the game's main progression exit. A missing portal, unexpected map change, locked portal after the requirement reaches zero, or a 30-second movement stall stops the routine with an error.
+
+### Repeat gathering
+
+Start gathering in-game, select **Repeat gathering** from the Automation dropdown, and click **Start Repeat gathering**. It checks the current skill's XP every 50 ms and interacts with the same resource after each XP gain. Mining, chopping, fishing, and catching are supported, including level-ups.
 
 Click **Stop repeat gathering** to stop. Moving away, changing characters or maps, opening a game dialog, or starting travel or an assignment also stops it. This runs only on the active character and starts off each time you launch the game. Whether it improves gathering speed still needs in-game testing.
 
-### Chopping minigame helper (isolated test feature)
+### Chopping minigame helper
 
-Start the chopping minigame normally, open **IdleOn Toolkit**, and click **Start chopping helper**. The helper reads the live rendered chopping bar state, waits until the arrow is inside the visible scoring target, and calls the game's native tap action. Once the smaller perfect target appears, it waits for that target instead of using the broader scoring area.
+Start the chopping minigame normally, select **Chopping helper** from the Automation dropdown, and click **Start Chopping helper**. The helper reads the live rendered chopping bar state, waits until the arrow is inside the visible scoring target, and calls the game's native tap action. Once the smaller perfect target appears, it waits for that target instead of using the broader scoring area.
 
 The helper never starts a minigame or spends a play. It starts disabled on every launch, runs only for the active chopping screen, and stops if the screen closes, changes, reports a miss, or exposes incomplete state. Travel and assignment controls are disabled while it is running. This has deterministic simulated-bar tests but still needs an in-game confirmation against the current game build.
 
@@ -65,10 +75,11 @@ Run the tests with `node --test tests/*.test.cjs`.
 
 ## Current menu limitations
 
-- Toolkit 0.3.0 is included. The return switch waits for a gathering drop and can leave it behind. The reported colosseum/enemy labeling correction is still pending.
+- Toolkit 0.5.0 is included. The return switch waits for a gathering drop and can leave it behind. The reported colosseum/enemy labeling correction is still pending.
 - Enemy labels use AFK map targets; special areas can display a surrounding area's enemy. Check the map name beneath each label.
 - World/location numbers are menu numbers, not official map IDs.
 - Travel mode only changes maps. Assignment mode starts gathering for mining, fishing, chopping, and catching; other skills remain travel-only.
+- Auto progress follows the game's main forward portal with ordinary movement and never calls the travel menu's teleport routine.
 - Chopping minigame timing uses the game's live UI model rather than fixed delays or screenshot coordinates. Window size and resolution should not affect detection, but a future game update can change the internal UI fields.
 - Inactive characters in Compass or Tesseract challenge runs are hidden until their live unlock rules can be checked while active.
 - A game update may require adapting the internal game references.

@@ -375,10 +375,11 @@ test('menu assignment controls select a character, destination and resource',()=
   assert.equal(elements.resource.value,'Copper');assert.equal(elements['assignment-choice'].hidden,false);
   f.attrs.Exp0=Array(7).fill(100);f.attrs.Lv0=Array(7).fill(10);
   f.playerState._TargetEnemy=f.target;f.attrs.PlayerMoveMaps[0].h.Main=2;
-  elements.repeat.onclick();assert.equal(f.context.window.__romNavigation.repeatGathering.active,true);
-  assert.equal(elements.repeat.textContent,'Stop repeat gathering');
-  elements.repeat.onclick();assert.equal(f.context.window.__romNavigation.repeatGathering.active,false);
-  elements.repeat.onclick();
+  elements.automation.value='repeat';elements.automation.onchange();
+  elements['automation-toggle'].onclick();assert.equal(f.context.window.__romNavigation.repeatGathering.active,true);
+  assert.equal(elements['automation-toggle'].textContent,'Stop Repeat gathering');
+  elements['automation-toggle'].onclick();assert.equal(f.context.window.__romNavigation.repeatGathering.active,false);
+  elements['automation-toggle'].onclick();
   elements['start-assignment'].onclick();
   assert.equal(f.context.window.__romNavigation.repeatGathering.active,false);
   const job=f.context.window.__romNavigation.assignment.current;
