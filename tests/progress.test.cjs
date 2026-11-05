@@ -55,20 +55,23 @@ test('game adapter reads portal slot zero and uses ordinary movement state',()=>
   const playerState={_PlayerNode:2,_TargetEnemy:{},_TargetEnemyTEMP:{},_MouseClickX:0};
   const actor=(name,script)=>({dead:false,recycled:false,getX:()=>40,getXCenter:()=>40,getAnimation:()=>0,behaviors:{getBehavior:key=>key===name?script:null}});
   const player=actor('ActorEvents_20',playerState),portal=actor('ActorEvents_47',{_PortalID:0,_isEtcPortal:0});
+  const oldAutoImage={},hudState={_UIinventory:[]};hudState._UIinventory[332]=oldAutoImage;const hud=actor('ActorEvents_29',hudState);
   const attrs={CurrentMap:6,UserInfo:['Main'],OtherPlayers:{h:{Main:player}},MapMonstersList:[],OptionsList:Array(19).fill(0),BlockMovement:0,
     CustomLists:{h:{MapName:names,MapDispName:display,SceneTransitions:transitions}},KillsLeft2Advance:[],NodeX:[],NodeY:[],PlayerMoveMaps:[{h:{Main:2}},{h:{Main:0}},{h:{Main:2}}],
     PixelHelperActor:[],QuestComplete:{h:{}},PlayerAutoMoveTOGGLE:0,PortalSelectedArrow:-1};
   attrs.KillsLeft2Advance[6]=[2];attrs.NodeX[2]=40;attrs.NodeX[3]=100;attrs.NodeY[2]=10;attrs.NodeY[3]=10;
   let open=false;const calls=[];
-  const get=key=>attrs[key],a={engine:{getGameAttribute:get,setGameAttribute:(key,value)=>attrs[key]=value}};
-  const context={get,a,clean:value=>String(value).replace(/_/g,' '),m:{_customBlock_Windwalker:(kind,map,slot)=>kind==='CanWeEnterPortal'&&map===6&&slot===0&&open?1:0},
-    q:{_customBlock_AFKgains(){}},v:{_customBlock_NetworkMove:(...args)=>calls.push(args)},
-    c:{getActorType:value=>value,getActorsOfType:type=>type===47?[portal]:[],isTransitioning:()=>false,getCurrentSceneName:()=> 'MininggA'}};
+  const get=key=>attrs[key],a={engine:{gameAttributes:{h:attrs},getGameAttribute:get,setGameAttribute:(key,value)=>attrs[key]=value}};
+  const context={get,a,clean:value=>String(value).replace(/_/g,' '),m:{_customBlock_Language:()=>-1,_customBlock_Windwalker:(kind,map,slot)=>kind==='CanWeEnterPortal'&&map===6&&slot===0&&open?1:0},
+    k:{_customBlock_addImgInst:name=>({name})},q:{_customBlock_AFKgains(){}},v:{_customBlock_NetworkMove:(...args)=>calls.push(args)},
+    c:{getActorType:value=>value,getActorsOfType:type=>type===47?[portal]:type===29?[hud]:[],isTransitioning:()=>false,getCurrentSceneName:()=> 'MininggA',
+      removeImage:image=>calls.push(['remove',image]),attachImageToActor:(image,target,x,y,scale)=>calls.push(['attach',image,target,x,y,scale])}};
   const gameAdapter=vm.runInNewContext(adapterSource+';gameAdapter',context),adapter=gameAdapter(()=>{});
   let state=adapter.progressionState();assert.equal(state.valid,true);assert.equal(state.remaining,2);assert.equal(state.destination,7);assert.equal(state.open,false);assert.equal(state.autoCombat,false);
-  adapter.enableAutoCombat(state);assert.equal(attrs.PlayerAutoMoveTOGGLE,1);
+  adapter.enableAutoCombat(state);assert.equal(attrs.PlayerAutoMoveTOGGLE,1);assert.deepEqual(hudState._UIinventory[332],{name:'UIbuttons6.png'});
+  assert.deepEqual(calls.slice(0,2).map(call=>call[0]),['remove','attach']);
   attrs.KillsLeft2Advance[6][0]=0;open=true;state=adapter.progressionState();adapter.moveToNextPortal(state);
-  assert.equal(attrs.PlayerMoveMaps[2].h.Main,3);assert.equal(playerState._MouseClickX,100);assert.equal(calls.length,1);
+  assert.equal(attrs.PlayerMoveMaps[2].h.Main,3);assert.equal(playerState._MouseClickX,100);assert.equal(calls.filter(call=>typeof call[0]==='number').length,1);
   player.getXCenter=()=>100;playerState._PlayerNode=3;state=adapter.progressionState();assert.equal(state.atPortal,true);
   adapter.enterNextPortal(state);assert.equal(attrs.PlayerMoveMaps[0].h.Main,5);assert.equal(attrs.BlockMovement,.5);
 });

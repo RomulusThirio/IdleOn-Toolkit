@@ -462,7 +462,15 @@
         const current=this.progressionState();
         if (!current.valid || current.map!==snapshot.map || current.destination!==snapshot.destination || current.remaining<=0) throw new Error('The next portal no longer requires kills.');
         if (!canAct()) throw new Error('The character cannot enable Auto combat while a dialog or transition is active.');
-        a.engine.setGameAttribute('PlayerAutoMoveTOGGLE',1);
+        const hud=actors(29).map(actor=>({actor,state:behavior(actor,'ActorEvents_29')})).find(entry=>Array.isArray(entry.state?._UIinventory));
+        if (!hud || typeof c.removeImage!=='function' || typeof c.attachImageToActor!=='function' || typeof k?._customBlock_addImgInst!=='function') throw new Error('The native Auto combat button is unavailable.');
+        // Match the native Auto button: it writes the live attribute directly and swaps the HUD image to its enabled state.
+        a.engine.gameAttributes.h.PlayerAutoMoveTOGGLE=1;
+        c.removeImage(hud.state._UIinventory[332]);
+        const language=typeof m?._customBlock_Language==='function' ? Number(m._customBlock_Language()) : -1;
+        const suffix=language>=0 ? String(get('Number2Letter')?.[language] ?? '') : '';
+        hud.state._UIinventory[332]=k._customBlock_addImgInst('UIbuttons'+suffix+'6.png');
+        c.attachImageToActor(hud.state._UIinventory[332],hud.actor,413,480,1);
       },
       moveToNextPortal(snapshot) {
         const current=this.progressionState();
