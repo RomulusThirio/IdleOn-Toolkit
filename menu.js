@@ -1,7 +1,7 @@
 /* Injected inside the installed game's closure; uses its own map data. */
 (() => {
   if (window.__romNavigation) return;
-  window.__romNavigation = { version: '0.3.0' };
+  window.__romNavigation = { version: '0.4.0' };
   let pending = null;
   const clean = value => String(value == null ? '' : value).replace(/_/g, ' ');
   const get = key => a.engine && a.engine.getGameAttribute(key);
@@ -200,6 +200,42 @@
     };
   }
 
+  function createChoppingMinigame(adapter, report) {
+    let job=null;
+    const stop=message=>{job=null;report(message);};
+    const preferredTarget=state=>state.targets.find(target=>target.perfect) || state.targets[0];
+    return {
+      get active() { return !!job; },
+      start() {
+        const state=adapter.choppingState();
+        if (!state?.active) throw new Error('Open and start the chopping minigame first.');
+        if (!state.valid) throw new Error('The chopping bar state is incomplete or ambiguous.');
+        job={lastTapCount:state.tapCount,lastTapPosition:null};
+        report('Chopping helper on. Watching the live bar and using native taps.');
+      },
+      stop() { if(job) stop('Chopping helper off.'); },
+      tick() {
+        if (!job) return;
+        try {
+          const state=adapter.choppingState();
+          if (!state?.active) {stop('Chopping helper stopped: the chopping minigame closed or changed.');return;}
+          if (!state.valid) {stop('Chopping helper stopped: the bar state became ambiguous.');return;}
+          if (state.result===1) {stop('Chopping helper stopped after a missed tap.');return;}
+          if (!state.moving || state.result!==0) return;
+          const target=preferredTarget(state);
+          if (!target) {stop('Chopping helper stopped: no visible scoring target was detected.');return;}
+          const inside=state.position>=target.start && state.position<=target.end;
+          const alreadyTapped=state.tapCount===job.lastTapCount && state.position===job.lastTapPosition;
+          if (!inside || alreadyTapped) return;
+          adapter.choppingTap();
+          job.lastTapCount=state.tapCount;
+          job.lastTapPosition=state.position;
+          report('Chopping helper active. Native tap '+(state.tapCount+1)+' on '+(target.perfect?'perfect':'scoring')+' target.');
+        } catch(error) { stop('Chopping helper stopped: '+error.message); }
+      }
+    };
+  }
+
   function gameAdapter(report) {
     const alive = actor => actor && !actor.dead && !actor.recycled;
     const behavior = (actor, name) => {
@@ -337,6 +373,33 @@
         return {character:character(),map:Number(get('CurrentMap')),target,resource:mob._MonsterType,name:def.Name || mob._MonsterType,
           xp:Number(xp),level:Number(level),movement:Number(get('PlayerMoveMaps')?.[0]?.h?.[character()]),gathering:this.activityStarted(mob._MonsterType)};
       },
+      choppingState() {
+        const helper=behavior(get('PixelHelperActor')?.[1],'ActorEvents_116');
+        const info=helper?._GeneralINFO, bar=info?.[7], animation=String(player()?.getAnimation?.() ?? '');
+        const active=Number(get('MenuType'))===7 && animation==='6' && Number(info?.[4])===1 && Number(helper?._UIinventoryOn2?.[94])===1;
+        if (!active) return {active:false,valid:false,targets:[]};
+        const number=value=>value===null || value===undefined || value==='' ? NaN : Number(value);
+        const position=number(bar?.[0])+7, direction=number(bar?.[1]), speed=number(bar?.[3]);
+        const target=(index,perfect)=>{
+          const start=number(bar?.[index]), width=number(bar?.[index+1]);
+          return Number.isFinite(start) && Number.isFinite(width) && width>0 && width<=225 && start>=-7 && start<=218
+            ? {start:start+(perfect?1:3),end:start+width+(perfect?5:3),perfect} : null;
+        };
+        const regular=[4,6,8,10].map(index=>target(index,false)).filter(Boolean);
+        const perfect=target(12,true), targets=perfect ? [perfect,...regular] : regular;
+        const valid=Array.isArray(info) && Array.isArray(bar) && info.length>7 && bar.length>=17 &&
+          Number.isFinite(position) && position>=0 && position<=225 && Number.isFinite(direction) && Math.abs(direction)===1 &&
+          Number.isFinite(speed) && speed>0 && speed<50 && targets.length>0 &&
+          Number.isFinite(number(info[2])) && Number.isFinite(number(bar[2])) && Number.isFinite(number(bar[15]));
+        return {active,valid,position,direction,speed,targets,score:number(info[2]),result:number(bar[2]),tapCount:number(bar[15]),moving:direction!==0};
+      },
+      choppingTap() {
+        const state=this.choppingState();
+        if (!state.active || !state.valid || !state.moving || state.result!==0) throw new Error('The chopping screen is not ready for a safe tap.');
+        const helper=behavior(get('PixelHelperActor')?.[1],'ActorEvents_116');
+        if (typeof helper?._customEvent_MinigameTap!=='function') throw new Error('The native chopping tap action is unavailable.');
+        helper._customEvent_MinigameTap();
+      },
       activityStarted(resource) {
         if (!loaded() || afk()) return false;
         const state=playerBehavior(), target=behavior(state?._TargetEnemy,'ActorEvents_1');
@@ -354,8 +417,8 @@
     const root = host.attachShadow({mode:'open'});
     root.innerHTML = `<style>
       *{box-sizing:border-box}button,input,select{font:inherit}button{cursor:pointer;background:#25446b;color:white;border:1px solid #53749a;border-radius:7px;padding:8px}button:disabled{opacity:.45;cursor:default}
-      #panel{width:345px;max-height:85vh;background:#111d2e;color:#eaf2ff;border:1px solid #53749a;border-radius:12px;padding:14px;box-shadow:0 8px 30px #0009}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}h2{font-size:18px;margin:0}input,select{width:100%;background:#0a1422;color:#fff;border:1px solid #4c6482;border-radius:6px;padding:9px;margin-bottom:9px}#rows{overflow:auto;max-height:45vh}.row{display:block;text-align:left;width:100%;margin:5px 0}.row small{display:block;margin-top:4px;color:#bdd0e6}#status{line-height:1.4;margin:10px 0;color:#bdcfe4;font-size:12px}footer{font-size:11px;color:#91a7c0;margin-top:9px}#cancel,#repeat{width:100%}#repeat-status{font-size:12px;line-height:1.4;margin:8px 0;color:#bdcfe4}[hidden]{display:none!important}
-      </style><button id="open">IdleOn Toolkit · F8</button><section id="panel" hidden><header><h2>IdleOn Toolkit</h2><button id="close" aria-label="Close">×</button></header><select id="mode" aria-label="Travel or assign activity"><option value="travel">Travel</option><option value="assign">Assign activity and return</option></select><select id="character" aria-label="Character" hidden></select><input id="search" placeholder="Search destinations or codes…" aria-label="Search destinations or codes"><select id="world" aria-label="World"><option value="">All worlds</option>${[1,2,3,4,5,6,7].map(w=>`<option value="${w}">World ${w}</option>`).join('')}</select><div id="assignment-choice" hidden><div id="chosen"></div><select id="resource" aria-label="Resource"></select><button id="start-assignment">Start assignment</button></div><button id="repeat" type="button">Start repeat gathering</button><div id="repeat-status" role="status">Interact again after each skill XP gain.</div><div id="rows"></div><div id="status">Waiting for your character…</div><button id="cancel" hidden>Cancel</button><footer>Only destinations unlocked for the selected character are shown.</footer></section>`;
+      #panel{width:345px;max-height:85vh;background:#111d2e;color:#eaf2ff;border:1px solid #53749a;border-radius:12px;padding:14px;box-shadow:0 8px 30px #0009}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}h2{font-size:18px;margin:0}input,select{width:100%;background:#0a1422;color:#fff;border:1px solid #4c6482;border-radius:6px;padding:9px;margin-bottom:9px}#rows{overflow:auto;max-height:45vh}.row{display:block;text-align:left;width:100%;margin:5px 0}.row small{display:block;margin-top:4px;color:#bdd0e6}#status{line-height:1.4;margin:10px 0;color:#bdcfe4;font-size:12px}footer{font-size:11px;color:#91a7c0;margin-top:9px}#cancel,#repeat,#chopping{width:100%}#repeat-status,#chopping-status{font-size:12px;line-height:1.4;margin:8px 0;color:#bdcfe4}[hidden]{display:none!important}
+      </style><button id="open">IdleOn Toolkit · F8</button><section id="panel" hidden><header><h2>IdleOn Toolkit</h2><button id="close" aria-label="Close">×</button></header><select id="mode" aria-label="Travel or assign activity"><option value="travel">Travel</option><option value="assign">Assign activity and return</option></select><select id="character" aria-label="Character" hidden></select><input id="search" placeholder="Search destinations or codes…" aria-label="Search destinations or codes"><select id="world" aria-label="World"><option value="">All worlds</option>${[1,2,3,4,5,6,7].map(w=>`<option value="${w}">World ${w}</option>`).join('')}</select><div id="assignment-choice" hidden><div id="chosen"></div><select id="resource" aria-label="Resource"></select><button id="start-assignment">Start assignment</button></div><button id="repeat" type="button">Start repeat gathering</button><div id="repeat-status" role="status">Interact again after each skill XP gain.</div><button id="chopping" type="button">Start chopping helper</button><div id="chopping-status" role="status">Open and start chopping, then enable the helper.</div><div id="rows"></div><div id="status">Waiting for your character…</div><button id="cancel" hidden>Cancel</button><footer>Only destinations unlocked for the selected character are shown.</footer></section>`;
     const el = id => root.getElementById(id);
     const status = message => { el('status').textContent = message; };
     let taskMessage = '', selectedRow = null, displayedOwner = '';
@@ -365,14 +428,29 @@
       el('repeat-status').textContent=message;
       el('repeat').textContent=repeat.active ? 'Stop repeat gathering' : 'Start repeat gathering';
     });
+    const chopping=createChoppingMinigame(adapter,message=>{
+      el('chopping-status').textContent=message;
+      el('chopping').textContent=chopping.active ? 'Stop chopping helper' : 'Start chopping helper';
+    });
     window.__romNavigation.repeatGathering=repeat;
+    window.__romNavigation.choppingMinigame=chopping;
     el('repeat').onclick=()=>{
       if (repeat.active) repeat.stop();
       else if (!pending && !assignment.current) {
         try {repeat.start();} catch(error) {el('repeat-status').textContent=error.message;}
       }
     };
+    el('chopping').onclick=()=>{
+      if (chopping.active) chopping.stop();
+      else if (!pending && !assignment.current) {
+        try {repeat.stop();chopping.start();} catch(error) {el('chopping-status').textContent=error.message;}
+      }
+    };
     setInterval(()=>repeat.tick(),50);
+    if (typeof requestAnimationFrame==='function') {
+      const choppingFrame=()=>{chopping.tick();requestAnimationFrame(choppingFrame);};
+      requestAnimationFrame(choppingFrame);
+    } else setInterval(()=>chopping.tick(),16);
     window.__romNavigation.assignment=assignment;
     function refreshCharacters() {
       const names=get('GetPlayersUsernames') || [], selected=el('character').value;
@@ -474,9 +552,10 @@
     function render() {
       try {
         refreshCharacters();
-        const busy=!!(pending || assignment.current);
+        const taskBusy=!!(pending || assignment.current), busy=taskBusy || chopping.active;
         ['mode','character','search','world','resource','start-assignment','repeat'].forEach(id=>{el(id).disabled=busy;});
-        el('cancel').hidden=!busy;
+        el('chopping').disabled=taskBusy;
+        el('cancel').hidden=!taskBusy;
         const all=entries(), query=el('search').value.trim().toLowerCase(), world=Number(el('world').value);
         const owner=el('mode').value==='assign' ? el('character').value : String((get('UserInfo') || [])[0] || '');
         displayedOwner=owner;
@@ -492,7 +571,7 @@
       } catch(error) { status('Waiting for game data: '+error.message); }
     }
     function travel(row) {
-      if(pending || assignment.current || !ready())return;
+      if(pending || assignment.current || chopping.active || !ready())return;
       if(!availableMaps().has(row.map)){render();status('That destination is locked for this character.');return;}
       if(Number(get('CurrentMap'))===row.map){status('You are already on this map.');return;}
       repeat.stop();
@@ -520,3 +599,4 @@
   }
   setTimeout(mount,0);
 })()
+
