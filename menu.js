@@ -220,13 +220,13 @@
           const state=adapter.progressionState();
           if (!state?.valid) throw new Error(state?.reason || 'The next-area portal state became unavailable.');
           if (job.phase==='cooldown') {
-            if (state.map!==job.expectedDestination) throw new Error('The expected area did not load within 10 seconds.');
+            if (state.map!==job.expectedDestination) throw new Error('The expected area did not load within 1 second.');
             job={map:state.map,phase:'waiting',expectedDestination:null,moveStartedAt:0,checkAt:0,lastRemaining:null};
             report('Arrived at '+state.location+'. Checking the next portal.');
           } else if (state.map!==job.map) {
             if (job.phase==='moving' && state.map===job.expectedDestination) {
-              job.phase='cooldown';job.checkAt=clock()+10000;
-              report('Arrived at '+state.location+'. Waiting 10 seconds before checking again.');
+              job.phase='cooldown';job.checkAt=clock()+1000;
+              report('Arrived at '+state.location+'. Waiting 1 second before checking again.');
               return;
             }
             throw new Error('The active map changed unexpectedly.');
@@ -247,8 +247,8 @@
             if (clock()-job.moveStartedAt>=30000) throw new Error('Could not reach the forward portal within 30 seconds.');
             if (!state.atPortal) return;
             adapter.enterNextPortal(state);
-            job.phase='cooldown';job.checkAt=clock()+10000;
-            report('Entering '+state.destinationName+'. Waiting 10 seconds before checking again.');
+            job.phase='cooldown';job.checkAt=clock()+1000;
+            report('Entering '+state.destinationName+'. Waiting 1 second before checking again.');
           }
         } catch(error) { stop('Auto progress stopped: '+error.message); }
       }

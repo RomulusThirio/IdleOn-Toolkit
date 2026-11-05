@@ -22,11 +22,11 @@ test('waits for the forward portal kill count without turning off',()=>{
   assert.equal(f.controller.active,true);assert.equal(f.calls.length,0);assert.match(f.messages.at(-1),/2 kills remaining/);
 });
 
-test('moves normally when unlocked, enters at the portal, then waits ten seconds',()=>{
+test('moves normally when unlocked, enters at the portal, then waits one second',()=>{
   const f=fixture();f.controller.start();f.state.remaining=0;f.state.open=true;f.tick();
   assert.deepEqual(f.calls,[['move',6,7]]);f.state.atPortal=true;f.tick();assert.deepEqual(f.calls.at(-1),['enter',6,7]);
   const reads=f.reads();f.state.map=7;f.state.location='Freefall Caverns';f.state.destination=8;f.state.destinationName='The Base of the Bark';f.state.remaining=9;f.state.atPortal=false;f.state.open=false;
-  f.tick(9999);assert.equal(f.reads(),reads);f.tick(1);assert.equal(f.reads(),reads+1);
+  f.tick(999);assert.equal(f.reads(),reads);f.tick(1);assert.equal(f.reads(),reads+1);
   assert.equal(f.controller.active,true);assert.match(f.messages.at(-1),/9 kills remaining/);
 });
 
