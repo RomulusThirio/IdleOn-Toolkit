@@ -33,9 +33,9 @@ The **Automation** dropdown groups Auto progress, Repeat gathering, and the Chop
 
 ### Auto progress
 
-Select **Auto progress** and click **Start Auto progress** while the active character is fighting in an ordinary area. The toolkit monitors the remaining kill requirement for the main forward portal. When it reaches zero, the character walks to the real portal using ordinary path movement, enters it, waits 1 second for the new area to settle, and begins monitoring that area's forward portal.
+Select **Auto progress** and click **Start Auto progress** while the active character is fighting in an ordinary area. The toolkit monitors the remaining kill requirement for the main forward portal. When it reaches zero, the character walks to the real portal using ordinary path movement, enters it, waits 1 second for the new area to settle, and begins monitoring that area's forward portal. If the new portal still needs kills, the toolkit turns the game's native Auto combat on.
 
-Auto progress remains enabled until you stop it or an error occurs. It does not start combat, choose talents, use teleportation, or guess between branching exits; it follows portal slot zero, which is the game's main progression exit. A missing portal, unexpected map change, locked portal after the requirement reaches zero, or a 30-second movement stall stops the routine with an error.
+Auto progress remains enabled until you stop it or an error occurs. It does not choose talents, use teleportation, or guess between branching exits; it follows portal slot zero, which is the game's main progression exit. A missing portal, unexpected map change, locked portal after the requirement reaches zero, or a 30-second movement stall stops the routine with an error.
 
 ### Repeat gathering
 

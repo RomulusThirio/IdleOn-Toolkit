@@ -10,9 +10,9 @@ const adapterSource=source.slice(source.indexOf('function gameAdapter('),source.
 
 function fixture() {
   let now=0,reads=0;
-  const state={valid:true,map:6,location:'Tunnels Entrance',destination:7,destinationName:'Freefall Caverns',remaining:3,open:false,atPortal:false};
+  const state={valid:true,map:6,location:'Tunnels Entrance',destination:7,destinationName:'Freefall Caverns',remaining:3,open:false,atPortal:false,autoCombat:false};
   const calls=[],messages=[];
-  const adapter={progressionState:()=>{reads++;return {...state};},moveToNextPortal:s=>calls.push(['move',s.map,s.destination]),enterNextPortal:s=>calls.push(['enter',s.map,s.destination])};
+  const adapter={progressionState:()=>{reads++;return {...state};},moveToNextPortal:s=>calls.push(['move',s.map,s.destination]),enterNextPortal:s=>calls.push(['enter',s.map,s.destination]),enableAutoCombat:s=>calls.push(['auto',s.map])};
   const controller=create(adapter,message=>messages.push(message),()=>now);
   return {state,calls,messages,controller,reads:()=>reads,tick:(ms=0)=>{now+=ms;controller.tick();}};
 }
@@ -27,7 +27,13 @@ test('moves normally when unlocked, enters at the portal, then waits one second'
   assert.deepEqual(f.calls,[['move',6,7]]);f.state.atPortal=true;f.tick();assert.deepEqual(f.calls.at(-1),['enter',6,7]);
   const reads=f.reads();f.state.map=7;f.state.location='Freefall Caverns';f.state.destination=8;f.state.destinationName='The Base of the Bark';f.state.remaining=9;f.state.atPortal=false;f.state.open=false;
   f.tick(999);assert.equal(f.reads(),reads);f.tick(1);assert.equal(f.reads(),reads+1);
-  assert.equal(f.controller.active,true);assert.match(f.messages.at(-1),/9 kills remaining/);
+  assert.equal(f.controller.active,true);assert.deepEqual(f.calls.at(-1),['auto',7]);assert.match(f.messages.at(-1),/Auto combat on.*9 kills remaining/);
+});
+
+test('does not toggle Auto combat when it is already on after arrival',()=>{
+  const f=fixture();f.controller.start();f.state.remaining=0;f.state.open=true;f.tick();f.state.atPortal=true;f.tick();
+  f.state.map=7;f.state.destination=8;f.state.destinationName='The Base of the Bark';f.state.remaining=4;f.state.open=false;f.state.autoCombat=true;
+  f.tick(1000);assert.equal(f.calls.filter(call=>call[0]==='auto').length,0);assert.match(f.messages.at(-1),/4 kills remaining/);
 });
 
 test('an unexpected map change is an error',()=>{
@@ -59,7 +65,8 @@ test('game adapter reads portal slot zero and uses ordinary movement state',()=>
     q:{_customBlock_AFKgains(){}},v:{_customBlock_NetworkMove:(...args)=>calls.push(args)},
     c:{getActorType:value=>value,getActorsOfType:type=>type===47?[portal]:[],isTransitioning:()=>false,getCurrentSceneName:()=> 'MininggA'}};
   const gameAdapter=vm.runInNewContext(adapterSource+';gameAdapter',context),adapter=gameAdapter(()=>{});
-  let state=adapter.progressionState();assert.equal(state.valid,true);assert.equal(state.remaining,2);assert.equal(state.destination,7);assert.equal(state.open,false);
+  let state=adapter.progressionState();assert.equal(state.valid,true);assert.equal(state.remaining,2);assert.equal(state.destination,7);assert.equal(state.open,false);assert.equal(state.autoCombat,false);
+  adapter.enableAutoCombat(state);assert.equal(attrs.PlayerAutoMoveTOGGLE,1);
   attrs.KillsLeft2Advance[6][0]=0;open=true;state=adapter.progressionState();adapter.moveToNextPortal(state);
   assert.equal(attrs.PlayerMoveMaps[2].h.Main,3);assert.equal(playerState._MouseClickX,100);assert.equal(calls.length,1);
   player.getXCenter=()=>100;playerState._PlayerNode=3;state=adapter.progressionState();assert.equal(state.atPortal,true);

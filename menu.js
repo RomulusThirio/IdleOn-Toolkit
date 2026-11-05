@@ -222,6 +222,12 @@
           if (job.phase==='cooldown') {
             if (state.map!==job.expectedDestination) throw new Error('The expected area did not load within 1 second.');
             job={map:state.map,phase:'waiting',expectedDestination:null,moveStartedAt:0,checkAt:0,lastRemaining:null};
+            if (state.remaining>0 && !state.autoCombat) {
+              adapter.enableAutoCombat(state);
+              job.lastRemaining=state.remaining;
+              report('Arrived at '+state.location+'. Auto combat on. '+describe(state));
+              return;
+            }
             report('Arrived at '+state.location+'. Checking the next portal.');
           } else if (state.map!==job.map) {
             if (job.phase==='moving' && state.map===job.expectedDestination) {
@@ -449,7 +455,14 @@
         const open=typeof m?._customBlock_Windwalker==='function' && m._customBlock_Windwalker('CanWeEnterPortal',map,0)===1;
         return {valid:true,map,location:clean(lists.MapDispName?.[map] || lists.MapName?.[map] || map),destination,
           destinationName:clean(lists.MapDispName?.[destination] || transitions[1][1]),remaining:Math.max(0,Math.ceil(remaining)),
-          open,node,x,portal,atPortal:Math.abs(x-actor.getXCenter())<50 && Math.abs(y-playerY)<25};
+          open,node,x,portal,autoCombat:Number(get('PlayerAutoMoveTOGGLE'))===1,
+          atPortal:Math.abs(x-actor.getXCenter())<50 && Math.abs(y-playerY)<25};
+      },
+      enableAutoCombat(snapshot) {
+        const current=this.progressionState();
+        if (!current.valid || current.map!==snapshot.map || current.destination!==snapshot.destination || current.remaining<=0) throw new Error('The next portal no longer requires kills.');
+        if (!canAct()) throw new Error('The character cannot enable Auto combat while a dialog or transition is active.');
+        a.engine.setGameAttribute('PlayerAutoMoveTOGGLE',1);
       },
       moveToNextPortal(snapshot) {
         const current=this.progressionState();
