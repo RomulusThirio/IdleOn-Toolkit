@@ -29,7 +29,13 @@ Assignment checks, loot handling, map access, nearest-resource selection, and UI
 
 ## Menu workspaces
 
-The menu has separate **Travel**, **Assignment**, and **Automation** workspaces. Travel only shows active-character destinations, Assignment contains its character/resource workflow, and Automation contains Auto progress, Repeat gathering, and the Chopping helper without crowding the destination list. Only one automation can run at a time.
+The menu has separate **Travel**, **Assignment**, **Builds**, and **Automation** workspaces. Travel only shows active-character destinations, Assignment contains its character/resource workflow, Builds provides read-only talent guidance, and Automation contains Auto progress, Repeat gathering, and the Chopping helper without crowding the destination list. Only one automation can run at a time.
+
+### Build planner
+
+The **Builds** workspace reads the active character's class path, regular talent tabs, current and maximum talent levels, active preset number, and remaining points. Choose AFK Combat, Active Combat, Bossing / Survival, Sampling, Mining, Chopping, Fishing, or Catching to receive a per-tab priority list and suggested next-point targets.
+
+Recommendations are generated locally from the live talent names and descriptions. You may paste community notes or talent names to give explicitly mentioned talents priority. The planner identifies its source and confidence and never spends points, switches presets, resets talents, or writes build data. It is guidance rather than a mathematically proven optimum; Active builds in particular depend on attack order, map layout, and live play behavior that static descriptions cannot measure.
 
 ### Auto progress
 
@@ -77,11 +83,12 @@ Run the tests with `node --test tests/*.test.cjs`.
 
 ## Current menu limitations
 
-- Toolkit 0.6.0 is included. The return switch waits for a gathering drop and can leave it behind. The reported colosseum/enemy labeling correction is still pending.
+- Toolkit 0.7.0 is included. The return switch waits for a gathering drop and can leave it behind. The reported colosseum/enemy labeling correction is still pending.
 - Enemy labels use AFK map targets; special areas can display a surrounding area's enemy. Check the map name beneath each label.
 - World/location numbers are menu numbers, not official map IDs.
 - Travel mode only changes maps. Assignment mode starts gathering for mining, fishing, chopping, and catching; other skills remain travel-only.
 - Auto progress follows the game's main forward portal with ordinary movement and never calls the travel menu's teleport routine.
+- Build recommendations cover regular class talent tabs only. Star and Legend talents remain manual, and community notes influence priorities only when they name a talent explicitly.
 - Chopping minigame timing uses the game's live UI model rather than fixed delays or screenshot coordinates. Window size and resolution should not affect detection, but a future game update can change the internal UI fields.
 - Inactive characters in Compass or Tesseract challenge runs are hidden until their live unlock rules can be checked while active.
 - A game update may require adapting the internal game references.

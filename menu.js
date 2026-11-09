@@ -1,7 +1,7 @@
 /* Injected inside the installed game's closure; uses its own map data. */
 (() => {
   if (window.__romNavigation) return;
-  window.__romNavigation = { version: '0.6.0' };
+  window.__romNavigation = { version: '0.7.0' };
   let pending = null;
   const clean = value => String(value == null ? '' : value).replace(/_/g, ' ');
   const get = key => a.engine && a.engine.getGameAttribute(key);
@@ -300,6 +300,46 @@
     };
   }
 
+  function createBuildPlanner(adapter) {
+    const profiles={
+      afk:{label:'AFK Combat',positive:[['afk',9],['fight',5],['kill',5],['damage',4],['weapon power',4],['accuracy',3],['defence',2],['health',2],['attack',2]],negative:['mining','chopp','fishing','catching','worship','trapping']},
+      active:{label:'Active Combat',positive:[['active',8],['cooldown',6],['respawn',6],['crystal',5],['damage',5],['critical',4],['crit',4],['attack speed',4],['attack',3],['movement',2],['drop',2]],negative:['skill afk','mining','chopp','fishing','catching']},
+      boss:{label:'Bossing / Survival',positive:[['boss',10],['surviv',8],['health',6],['defence',6],['dodge',5],['accuracy',5],['damage',4],['critical',3],['cooldown',3],['mana',2]],negative:['afk gain','mining','chopp','fishing','catching']},
+      sampling:{label:'Sampling',positive:[['sample',12],['printer',10],['efficiency',7],['skill afk',6],['multi',4],['carry',3],['skill exp',2]],negative:['class exp','boss','crystal']},
+      mining:{label:'Mining',positive:[['mining',12],['ore',10],['pickaxe',9],['efficiency',7],['skill afk',6],['skill exp',4],['strength',2]],negative:['chopp','fishing','catching']},
+      chopping:{label:'Chopping',positive:[['chopp',12],['log',9],['tree',8],['efficiency',7],['skill afk',6],['skill exp',4],['wisdom',2]],negative:['mining','fishing','catching']},
+      fishing:{label:'Fishing',positive:[['fishing',12],['fish',10],['rod',8],['efficiency',7],['skill afk',6],['skill exp',4],['strength',2]],negative:['mining','chopp','catching']},
+      catching:{label:'Catching',positive:[['catching',12],['bug',10],['net',8],['efficiency',7],['skill afk',6],['skill exp',4],['agility',2]],negative:['mining','chopp','fishing']}
+    };
+    const text=value=>clean(value).toLowerCase();
+    return {
+      goals:Object.entries(profiles).map(([id,profile])=>({id,label:profile.label})),
+      plan(goal='afk', imported='') {
+        const state=adapter.buildState();
+        if (!state?.valid) return {...state,goal,profile:profiles[goal]?.label || goal,tabs:[]};
+        const profile=profiles[goal] || profiles.afk, notes=text(imported);
+        const tabs=state.tabs.map(tab=>{
+          const ranked=tab.talents.map(talent=>{
+            const haystack=text(talent.name+' '+talent.description);let score=0;const reasons=[];
+            for (const [term,weight] of profile.positive) if(haystack.includes(term)){score+=weight;reasons.push(term);}
+            for (const term of profile.negative) if(haystack.includes(term)) score-=8;
+            const talentName=text(talent.name);
+            if (notes && talentName.length>=4 && notes.includes(talentName)) {score+=50;reasons.unshift('imported guidance');}
+            return {...talent,score,reasons};
+          }).filter(talent=>talent.score>0 && talent.current<talent.max).sort((left,right)=>right.score-left.score || left.id-right.id);
+          let points=tab.available;
+          const recommendations=ranked.slice(0,6).map((talent,index)=>{
+            const add=Math.max(0,Math.min(points,talent.max-talent.current));points-=add;
+            return {...talent,priority:index+1,suggested:talent.current+add,add,confidence:talent.score>=12?'High':talent.score>=6?'Medium':'General'};
+          });
+          return {...tab,recommendations};
+        });
+        return {...state,goal,profile:profile.label,tabs,source:notes?'Local account-aware priorities plus pasted guidance':'Local account-aware priorities',
+          warning:'Recommendation only. No talents or presets were changed.'};
+      }
+    };
+  }
+
   function createChoppingMinigame(adapter, report, clock = () => Date.now()) {
     let job=null;
     const stop=message=>{job=null;report(message);};
@@ -475,6 +515,30 @@
         return {character:character(),map:Number(get('CurrentMap')),target,resource:mob._MonsterType,name:def.Name || mob._MonsterType,
           xp:Number(xp),level:Number(level),movement:Number(get('PlayerMoveMaps')?.[0]?.h?.[character()]),gathering:this.activityStarted(mob._MonsterType)};
       },
+      buildState() {
+        const lists=get('CustomLists')?.h, levels=get('SkillLevels'), maximums=get('SkillLevelsMAX'), classId=Number(get('CharacterClass'));
+        const fail=reason=>({valid:false,reason});
+        if (!loaded()) return fail('Select a fully loaded character before planning a build.');
+        if (!lists || !Array.isArray(levels) || !Array.isArray(maximums) || !Number.isInteger(classId)) return fail('Talent data is unavailable.');
+        if (typeof x?._customBlock_ReturnClasses!=='function' || typeof k?._customBlock_TotalTalentPoints!=='function') return fail('The game build no longer exposes talent planning data.');
+        const classPath=Array.from(x._customBlock_ReturnClasses(classId) || []).map(Number).filter(id=>Number.isInteger(id) && id>0).slice(0,5);
+        if (!classPath.length) return fail('No regular talent tabs are available for this character.');
+        const tabs=classPath.map((tabId,index)=>{
+          const talents=[];
+          for (let slot=0;slot<15;slot++) {
+            const id=Number(lists.TalentOrder?.[slot+15*(tabId-1)]), max=Number(maximums[id]), current=Number(levels[id]);
+            if (!Number.isInteger(id) || id<0 || !Number.isFinite(max) || max<=0) continue;
+            talents.push({id,slot,current:Math.max(0,current || 0),max:Math.max(0,max),name:clean(lists.TalentIconNames?.[id] || 'Talent '+id),
+              description:clean(lists.TalentDescriptions?.[id]?.[0]?.[0] || '')});
+          }
+          return {index,tabId,name:clean(lists.ClassNames?.[tabId] || 'Talent tab '+(index+1)),talents,spent:talents.reduce((sum,talent)=>sum+talent.current,0)};
+        });
+        const spent=tabs.map(tab=>tab.spent);while(spent.length<5)spent.push(0);spent.push(0);
+        const available=Array.from(k._customBlock_TotalTalentPoints(spent) || []);
+        tabs.forEach((tab,index)=>tab.available=Math.max(0,Math.floor(Number(available[index]) || 0)));
+        return {valid:true,character:character(),classId,className:clean(lists.ClassNames?.[classId] || 'Class '+classId),
+          level:Number(get('Lv0')?.[0]) || 0,preset:(Number(get('PlayerStuff')?.[1]) || 0)+1,tabs};
+      },
       progressionState() {
         const map=Number(get('CurrentMap')), lists=get('CustomLists')?.h, transitions=lists?.SceneTransitions?.[map];
         const fail=reason=>({valid:false,reason,map});
@@ -577,16 +641,38 @@
     const root = host.attachShadow({mode:'open'});
     root.innerHTML = `<style>
       *{box-sizing:border-box}button,input,select{font:inherit}button{cursor:pointer;background:#25446b;color:white;border:1px solid #53749a;border-radius:7px;padding:8px}button:disabled{opacity:.45;cursor:default}
-      #panel{width:410px;max-height:88vh;overflow:auto;background:#111d2e;color:#eaf2ff;border:1px solid #53749a;border-radius:12px;padding:14px;box-shadow:0 8px 30px #0009}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}h2{font-size:18px;margin:0}h3{font-size:15px;margin:2px 0 5px}.hint{font-size:11px;color:#91a7c0;margin:0 0 10px;line-height:1.4}input,select{width:100%;background:#0a1422;color:#fff;border:1px solid #4c6482;border-radius:6px;padding:9px;margin-bottom:9px}.tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:12px}.tabs button{padding:8px 4px}.page{border-top:1px solid #29435f;padding-top:11px}#rows{overflow:auto;max-height:40vh}.row{display:block;text-align:left;width:100%;margin:5px 0}.row small{display:block;margin-top:4px;color:#bdd0e6}#status,#automation-status{line-height:1.4;margin:10px 0;color:#bdcfe4;font-size:12px}.settings{display:grid;grid-template-columns:1fr 1fr;gap:8px}.settings label{font-size:11px;color:#a9bdd4}.settings input{margin-top:4px}.diagnostics{background:#0a1422;border:1px solid #294968;border-radius:8px;padding:10px;margin:10px 0}.metrics{display:grid;grid-template-columns:1fr 1fr;gap:7px;font-size:12px}.metric{background:#10243a;border-radius:6px;padding:7px}.metric span{display:block;color:#8fa8c2;font-size:10px;margin-bottom:2px}#automation-log{margin:8px 0 0;padding-left:20px;max-height:120px;overflow:auto;color:#aebfd2;font-size:11px;line-height:1.4}footer{font-size:11px;color:#91a7c0;margin-top:9px}#cancel,#automation-toggle,#start-assignment{width:100%}[hidden]{display:none!important}
-      </style><button id="open">IdleOn Toolkit · F8</button><section id="panel" hidden><header><h2>IdleOn Toolkit</h2><button id="close" aria-label="Close">×</button></header><nav class="tabs"><button id="tab-travel">Travel</button><button id="tab-assign">Assignment</button><button id="tab-automation">Automation</button></nav><select id="mode" hidden aria-label="Travel or assign activity"><option value="travel">Travel</option><option value="assign">Assign activity and return</option></select><section id="destination-page" class="page"><h3 id="destination-title">Travel</h3><p id="destination-help" class="hint">Move the active character to an unlocked destination.</p><select id="character" aria-label="Character" hidden></select><input id="search" placeholder="Search destinations or codes…" aria-label="Search destinations or codes"><select id="world" aria-label="World"><option value="">All worlds</option>${[1,2,3,4,5,6,7].map(w=>`<option value="${w}">World ${w}</option>`).join('')}</select><div id="assignment-choice" hidden><div id="chosen"></div><select id="resource" aria-label="Resource"></select><button id="start-assignment">Start assignment</button></div><div id="rows"></div><div id="status">Waiting for your character…</div><button id="cancel" hidden>Cancel</button><footer>Only destinations unlocked for the selected character are shown.</footer></section><section id="automation-page" class="page" hidden><h3>Automation</h3><p class="hint">Run one focused helper at a time. Travel and assignments remain separate.</p><select id="automation" aria-label="Automation"><option value="progress">Auto progress</option><option value="repeat">Repeat gathering</option><option value="chopping">Chopping helper</option></select><div id="progress-tools"><div class="settings"><label>Arrival wait (seconds)<input id="arrival-delay" type="number" min="0.25" max="10" step="0.25"></label><label>No-kill timeout (seconds)<input id="progress-timeout" type="number" min="15" max="900" step="5"></label></div><div class="diagnostics"><div class="metrics"><div class="metric"><span>Phase</span><strong id="diag-phase">Off</strong></div><div class="metric"><span>Auto combat</span><strong id="diag-auto">Unknown</strong></div><div class="metric"><span>Area</span><strong id="diag-area">—</strong></div><div class="metric"><span>Next portal</span><strong id="diag-portal">—</strong></div><div class="metric"><span>Kills remaining</span><strong id="diag-kills">—</strong></div><div class="metric"><span>No progress</span><strong id="diag-stall">—</strong></div></div><ol id="automation-log"></ol></div></div><button id="automation-toggle" type="button">Start Auto progress</button><div id="automation-status" role="status">Choose an automation. Only one runs at a time.</div></section></section>`;
+      #panel{width:410px;max-height:88vh;overflow:auto;background:#111d2e;color:#eaf2ff;border:1px solid #53749a;border-radius:12px;padding:14px;box-shadow:0 8px 30px #0009}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}h2{font-size:18px;margin:0}h3{font-size:15px;margin:2px 0 5px}h4{font-size:13px;margin:0 0 5px}.hint{font-size:11px;color:#91a7c0;margin:0 0 10px;line-height:1.4}input,select,textarea{width:100%;background:#0a1422;color:#fff;border:1px solid #4c6482;border-radius:6px;padding:9px;margin-bottom:9px}.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px}.tabs button{padding:8px 3px;font-size:12px}.page{border-top:1px solid #29435f;padding-top:11px}#rows{overflow:auto;max-height:40vh}.row{display:block;text-align:left;width:100%;margin:5px 0}.row small{display:block;margin-top:4px;color:#bdd0e6}#status,#automation-status,#build-status{line-height:1.4;margin:10px 0;color:#bdcfe4;font-size:12px}.settings{display:grid;grid-template-columns:1fr 1fr;gap:8px}.settings label{font-size:11px;color:#a9bdd4}.settings input{margin-top:4px}.diagnostics,.build-tab{background:#0a1422;border:1px solid #294968;border-radius:8px;padding:10px;margin:10px 0}.metrics{display:grid;grid-template-columns:1fr 1fr;gap:7px;font-size:12px}.metric{background:#10243a;border-radius:6px;padding:7px}.metric span{display:block;color:#8fa8c2;font-size:10px;margin-bottom:2px}#automation-log{margin:8px 0 0;padding-left:20px;max-height:120px;overflow:auto;color:#aebfd2;font-size:11px;line-height:1.4}.build-pick{border-top:1px solid #203b57;padding:6px 0;font-size:12px}.build-pick:first-of-type{border-top:0}.build-pick small{display:block;color:#91a7c0;margin-top:2px}textarea{resize:vertical;min-height:58px;font:12px Arial,sans-serif}footer{font-size:11px;color:#91a7c0;margin-top:9px}#cancel,#automation-toggle,#start-assignment,#build-refresh{width:100%}[hidden]{display:none!important}
+      </style><button id="open">IdleOn Toolkit · F8</button><section id="panel" hidden><header><h2>IdleOn Toolkit</h2><button id="close" aria-label="Close">×</button></header><nav class="tabs"><button id="tab-travel">Travel</button><button id="tab-assign">Assignment</button><button id="tab-builds">Builds</button><button id="tab-automation">Automation</button></nav><select id="mode" hidden aria-label="Travel or assign activity"><option value="travel">Travel</option><option value="assign">Assign activity and return</option></select><section id="destination-page" class="page"><h3 id="destination-title">Travel</h3><p id="destination-help" class="hint">Move the active character to an unlocked destination.</p><select id="character" aria-label="Character" hidden></select><input id="search" placeholder="Search destinations or codes…" aria-label="Search destinations or codes"><select id="world" aria-label="World"><option value="">All worlds</option>${[1,2,3,4,5,6,7].map(w=>`<option value="${w}">World ${w}</option>`).join('')}</select><div id="assignment-choice" hidden><div id="chosen"></div><select id="resource" aria-label="Resource"></select><button id="start-assignment">Start assignment</button></div><div id="rows"></div><div id="status">Waiting for your character…</div><button id="cancel" hidden>Cancel</button><footer>Only destinations unlocked for the selected character are shown.</footer></section><section id="build-page" class="page" hidden><h3>Build Planner</h3><p class="hint">Read-only recommendations for the active character. This never spends points or changes presets.</p><select id="build-goal" aria-label="Build goal"></select><textarea id="build-import" placeholder="Optional: paste community notes or a list of talent names to influence priorities."></textarea><button id="build-refresh">Refresh recommendations</button><div id="build-status">Select a goal to inspect the current character.</div><div id="build-results"></div><footer id="build-source"></footer></section><section id="automation-page" class="page" hidden><h3>Automation</h3><p class="hint">Run one focused helper at a time. Travel and assignments remain separate.</p><select id="automation" aria-label="Automation"><option value="progress">Auto progress</option><option value="repeat">Repeat gathering</option><option value="chopping">Chopping helper</option></select><div id="progress-tools"><div class="settings"><label>Arrival wait (seconds)<input id="arrival-delay" type="number" min="0.25" max="10" step="0.25"></label><label>No-kill timeout (seconds)<input id="progress-timeout" type="number" min="15" max="900" step="5"></label></div><div class="diagnostics"><div class="metrics"><div class="metric"><span>Phase</span><strong id="diag-phase">Off</strong></div><div class="metric"><span>Auto combat</span><strong id="diag-auto">Unknown</strong></div><div class="metric"><span>Area</span><strong id="diag-area">—</strong></div><div class="metric"><span>Next portal</span><strong id="diag-portal">—</strong></div><div class="metric"><span>Kills remaining</span><strong id="diag-kills">—</strong></div><div class="metric"><span>No progress</span><strong id="diag-stall">—</strong></div></div><ol id="automation-log"></ol></div></div><button id="automation-toggle" type="button">Start Auto progress</button><div id="automation-status" role="status">Choose an automation. Only one runs at a time.</div></section></section>`;
     const el = id => root.getElementById(id);
     const status = message => { el('status').textContent = message; };
     let taskMessage = '', selectedRow = null, displayedOwner = '', workspace='travel';
     const adapter=gameAdapter(message => { taskMessage=message; status(message); });
     const assignment = createAssignment(adapter);
+    const buildPlanner=createBuildPlanner(adapter);
+    for (const goal of buildPlanner.goals) {const option=document.createElement('option');option.value=goal.id;option.textContent=goal.label;el('build-goal').appendChild(option);}
+    function renderBuildPlanner() {
+      const plan=buildPlanner.plan(el('build-goal').value,el('build-import').value);
+      el('build-results').replaceChildren();
+      if (!plan.valid) {el('build-status').textContent=plan.reason || 'Build data is unavailable.';el('build-source').textContent='No game data was changed.';return;}
+      el('build-status').textContent=plan.character+' · '+plan.className+' · Level '+plan.level+' · Talent preset '+plan.preset+' · '+plan.profile;
+      for (const tab of plan.tabs) {
+        const card=document.createElement('section');card.className='build-tab';
+        const heading=document.createElement('h4');heading.textContent=tab.name+' · '+tab.available+' unspent points';card.appendChild(heading);
+        if (!tab.recommendations.length) {const empty=document.createElement('div');empty.className='hint';empty.textContent='No unmaxed talents matched this goal. Review this tab manually.';card.appendChild(empty);}
+        for (const pick of tab.recommendations) {
+          const row=document.createElement('div');row.className='build-pick';
+          const target=pick.add>0 ? ' → '+pick.suggested+' (spend '+pick.add+')' : ' · next points when available';
+          row.textContent=pick.priority+'. '+pick.name+' · '+pick.current+'/'+pick.max+target;
+          const detail=document.createElement('small');detail.textContent=pick.confidence+' confidence · '+(pick.reasons.length?'Matched: '+pick.reasons.join(', '):'General priority');row.appendChild(detail);card.appendChild(row);
+        }
+        el('build-results').appendChild(card);
+      }
+      el('build-source').textContent=plan.source+' · '+plan.warning;
+    }
+    el('build-refresh').onclick=renderBuildPlanner;el('build-goal').onchange=renderBuildPlanner;
     const automationEvents=[];
     const renderAutomationLog=()=>{el('automation-log').replaceChildren();automationEvents.slice(-8).reverse().forEach(event=>{const item=document.createElement('li');item.textContent=event;el('automation-log').appendChild(item);});};
-    const automationReport=message=>{automationEvents.push(new Date().toLocaleTimeString()+' · '+message);el('automation-status').textContent=message;renderAutomationLog();updateAutomationControls();updateProgressDiagnostics();if(!el('panel').hidden && workspace!=='automation')render();};
+    const automationReport=message=>{automationEvents.push(new Date().toLocaleTimeString()+' · '+message);el('automation-status').textContent=message;renderAutomationLog();updateAutomationControls();updateProgressDiagnostics();if(!el('panel').hidden && (workspace==='travel'||workspace==='assign'))render();};
     const repeat=createRepeatGathering(adapter,automationReport);
     const chopping=createChoppingMinigame(adapter,automationReport);
     const progress=createAutoProgress(adapter,automationReport);
@@ -614,6 +700,7 @@
     window.__romNavigation.repeatGathering=repeat;
     window.__romNavigation.choppingMinigame=chopping;
     window.__romNavigation.autoProgress=progress;
+    window.__romNavigation.buildPlanner=buildPlanner;
     el('arrival-delay').value='1';el('progress-timeout').value='120';
     const configureProgress=()=>progress.configure({arrivalDelayMs:Number(el('arrival-delay').value)*1000,noProgressMs:Number(el('progress-timeout').value)*1000});
     el('arrival-delay').onchange=configureProgress;el('progress-timeout').onchange=configureProgress;
@@ -651,19 +738,21 @@
       status('Choose the character and resource, then start the assignment.');
     }
     function setWorkspace(next) {
-      workspace=['travel','assign','automation'].includes(next)?next:'travel';
-      el('destination-page').hidden=workspace==='automation';el('automation-page').hidden=workspace!=='automation';
-      for (const name of ['travel','assign','automation']) el('tab-'+name).style.background=name===workspace?'#3b6594':'#1a304c';
-      if (workspace!=='automation') {
+      workspace=['travel','assign','builds','automation'].includes(next)?next:'travel';
+      el('destination-page').hidden=workspace==='automation'||workspace==='builds';el('build-page').hidden=workspace!=='builds';el('automation-page').hidden=workspace!=='automation';
+      for (const name of ['travel','assign','builds','automation']) el('tab-'+name).style.background=name===workspace?'#3b6594':'#1a304c';
+      if (workspace==='travel'||workspace==='assign') {
         el('mode').value=workspace;el('character').hidden=workspace!=='assign';
         el('destination-title').textContent=workspace==='assign'?'Assign activity and return':'Travel';
         el('destination-help').textContent=workspace==='assign'?'Send a selected character to a gathering resource, verify it starts, then return.':'Move the active character to an unlocked destination.';
         el('assignment-choice').hidden=true;selectedRow=null;render();
-      } else {updateAutomationControls();renderAutomationLog();}
+      } else if(workspace==='builds') renderBuildPlanner();
+      else {updateAutomationControls();renderAutomationLog();}
     }
     el('mode').onchange=()=>setWorkspace(el('mode').value);
     el('tab-travel').onclick=()=>setWorkspace('travel');
     el('tab-assign').onclick=()=>setWorkspace('assign');
+    el('tab-builds').onclick=()=>setWorkspace('builds');
     el('tab-automation').onclick=()=>setWorkspace('automation');
     el('character').onchange=()=>{selectedRow=null;el('assignment-choice').hidden=true;render();};
     el('start-assignment').onclick=()=>{
@@ -675,7 +764,7 @@
         el('assignment-choice').hidden=true; render(); status(taskMessage);
       } catch(error) { status(error.message); }
     };
-    const toggle = () => { el('panel').hidden = !el('panel').hidden; el('open').hidden = !el('panel').hidden; if (!el('panel').hidden) { if(workspace==='automation')updateAutomationControls();else{render();el('search').focus();} } };
+    const toggle = () => { el('panel').hidden = !el('panel').hidden; el('open').hidden = !el('panel').hidden; if (!el('panel').hidden) { if(workspace==='automation')updateAutomationControls();else if(workspace==='builds')renderBuildPlanner();else{render();el('search').focus();} } };
     el('open').onclick = toggle; el('close').onclick = toggle;
     window.addEventListener('keydown', event => { if(event.code === 'F8'){event.preventDefault();event.stopImmediatePropagation();toggle();}}, true);
     ['pointerdown','pointerup','mousedown','mouseup','click','dblclick','wheel','keydown','keyup'].forEach(type => host.addEventListener(type, event=>event.stopPropagation()));
