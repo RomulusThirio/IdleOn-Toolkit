@@ -27,15 +27,17 @@ Only unlocked destinations are shown. Travel uses the active character's progres
 
 Assignment checks, loot handling, map access, nearest-resource selection, and UI controls are covered by automated tests.
 
-## Automation
+## Menu workspaces
 
-The **Automation** dropdown groups Auto progress, Repeat gathering, and the Chopping helper. Only one automation can run at a time. Select one and use the button beneath the dropdown to start or stop it.
+The menu has separate **Travel**, **Assignment**, and **Automation** workspaces. Travel only shows active-character destinations, Assignment contains its character/resource workflow, and Automation contains Auto progress, Repeat gathering, and the Chopping helper without crowding the destination list. Only one automation can run at a time.
 
 ### Auto progress
 
-Select **Auto progress** and click **Start Auto progress** while the active character is fighting in an ordinary area. The toolkit monitors the remaining kill requirement for the main forward portal. When it reaches zero, the character walks to the real portal using ordinary path movement, enters it, waits 1 second for the new area to settle, and begins monitoring that area's forward portal. If the new portal still needs kills, the toolkit turns the game's native Auto combat on.
+Select **Auto progress** and click **Start Auto progress** while the active character is in an ordinary fighting area. The toolkit turns native Auto combat on when kills are required, monitors the main forward portal's requirement, and restores Auto if the game turns it off. When the requirement reaches zero, the character walks to the real portal using ordinary path movement, enters it, waits for the configured arrival delay after the new area loads, and repeats.
 
-Auto progress remains enabled until you stop it or an error occurs. It does not choose talents, use teleportation, or guess between branching exits; it follows portal slot zero, which is the game's main progression exit. A missing portal, unexpected map change, locked portal after the requirement reaches zero, or a 30-second movement stall stops the routine with an error.
+The Automation workspace shows the current phase, area, destination, remaining kills, Auto state, no-progress timer, and the eight most recent automation events. The arrival delay defaults to 1 second. The no-kill timeout defaults to 120 seconds and can be set from 15 to 900 seconds.
+
+Auto progress remains enabled until you stop it or an error occurs. It does not choose talents, use teleportation, or guess between branching exits; it follows portal slot zero, which is the game's main progression exit. A missing portal, unexpected map change, locked portal after the requirement reaches zero, 30-second movement stall, or expired no-kill timeout stops the routine with an error.
 
 ### Repeat gathering
 
@@ -75,7 +77,7 @@ Run the tests with `node --test tests/*.test.cjs`.
 
 ## Current menu limitations
 
-- Toolkit 0.5.0 is included. The return switch waits for a gathering drop and can leave it behind. The reported colosseum/enemy labeling correction is still pending.
+- Toolkit 0.6.0 is included. The return switch waits for a gathering drop and can leave it behind. The reported colosseum/enemy labeling correction is still pending.
 - Enemy labels use AFK map targets; special areas can display a surrounding area's enemy. Check the map name beneath each label.
 - World/location numbers are menu numbers, not official map IDs.
 - Travel mode only changes maps. Assignment mode starts gathering for mining, fishing, chopping, and catching; other skills remain travel-only.

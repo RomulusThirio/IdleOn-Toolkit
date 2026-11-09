@@ -367,7 +367,9 @@ test('menu assignment controls select a character, destination and resource',()=
   f.context.document={body:element(),createElement:element};
   f.context.setTimeout=fn=>timers.push(fn);f.context.setInterval=()=>{};
   vm.runInNewContext(source,f.context);timers.shift()();
-  elements.mode.value='assign';elements.mode.onchange();
+  elements['tab-automation'].onclick();assert.equal(elements['automation-page'].hidden,false);assert.equal(elements['destination-page'].hidden,true);
+  assert.equal(elements['diag-phase'].textContent,'Off');
+  elements['tab-assign'].onclick();assert.equal(elements['destination-page'].hidden,false);assert.equal(elements.character.hidden,false);
   assert.equal(elements.rows.children.length,1);
   elements.character.value='Miner';elements.character.onchange();
   assert.equal(elements.rows.children.length,2);

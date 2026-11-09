@@ -1,7 +1,7 @@
 /* Injected inside the installed game's closure; uses its own map data. */
 (() => {
   if (window.__romNavigation) return;
-  window.__romNavigation = { version: '0.5.0' };
+  window.__romNavigation = { version: '0.6.0' };
   let pending = null;
   const clean = value => String(value == null ? '' : value).replace(/_/g, ' ');
   const get = key => a.engine && a.engine.getGameAttribute(key);
@@ -201,16 +201,35 @@
   }
 
   function createAutoProgress(adapter, report, clock = () => Date.now()) {
-    let job=null;
-    const stop=message=>{job=null;report(message);};
+    let job=null,lastState=null,lastMessage='Auto progress is off.';
+    let settings={arrivalDelayMs:1000,noProgressMs:120000};
+    const say=message=>{lastMessage=message;report(message);};
+    const stop=message=>{job=null;say(message);};
     const describe=state=>state.remaining===1 ? '1 kill remaining before '+state.destinationName+'.' : state.remaining+' kills remaining before '+state.destinationName+'.';
+    const freshJob=(state, phase='waiting')=>({map:state.map,phase,expectedDestination:null,moveStartedAt:0,enterStartedAt:0,checkAt:0,
+      lastRemaining:state.remaining,lastProgressAt:clock(),lastAutoAttemptAt:-Infinity});
+    const waitText=()=>settings.arrivalDelayMs===1000 ? '1 second' : (settings.arrivalDelayMs/1000)+' seconds';
     return {
       get active() { return !!job; },
+      get diagnostics() {
+        return {active:!!job,phase:job?.phase || 'off',message:lastMessage,map:lastState?.map,location:lastState?.location,
+          destinationName:lastState?.destinationName,remaining:lastState?.remaining,autoCombat:lastState?.autoCombat,
+          noProgressFor:job && job.phase==='waiting' && lastState?.remaining>0 ? Math.max(0,clock()-job.lastProgressAt) : 0,
+          noProgressLimit:settings.noProgressMs,arrivalDelay:settings.arrivalDelayMs};
+      },
+      configure(next={}) {
+        const arrival=Number(next.arrivalDelayMs), progress=Number(next.noProgressMs);
+        if (Number.isFinite(arrival)) settings.arrivalDelayMs=Math.min(10000,Math.max(250,Math.round(arrival)));
+        if (Number.isFinite(progress)) settings.noProgressMs=Math.min(900000,Math.max(15000,Math.round(progress)));
+      },
       start() {
         const state=adapter.progressionState();
         if (!state?.valid) throw new Error(state?.reason || 'The next-area portal state is unavailable.');
-        job={map:state.map,phase:'waiting',expectedDestination:null,moveStartedAt:0,enterStartedAt:0,checkAt:0,lastRemaining:null};
-        report(state.remaining>0 ? 'Auto progress on. '+describe(state) : 'Auto progress on. The next portal is unlocked.');
+        lastState=state;job=freshJob(state);
+        if (state.remaining>0 && !state.autoCombat) {
+          adapter.enableAutoCombat(state);job.lastAutoAttemptAt=clock();lastState={...state,autoCombat:true};
+          say('Auto progress on. Auto combat enabled. '+describe(state));
+        } else say(state.remaining>0 ? 'Auto progress on. '+describe(state) : 'Auto progress on. The next portal is unlocked.');
       },
       stop() { if(job) stop('Auto progress off.'); },
       tick() {
@@ -220,10 +239,11 @@
           const state=adapter.progressionState();
           if (job.phase==='entering' && state?.transitioning) return;
           if (!state?.valid) throw new Error(state?.reason || 'The next-area portal state became unavailable.');
+          lastState=state;
           if (job.phase==='entering') {
             if (state.map===job.expectedDestination) {
-              job.phase='cooldown';job.checkAt=clock()+1000;
-              report('Arrived at '+state.location+'. Waiting 1 second before checking again.');
+              job.phase='cooldown';job.checkAt=clock()+settings.arrivalDelayMs;
+              say('Arrived at '+state.location+'. Waiting '+waitText()+' before checking again.');
               return;
             }
             if (state.map!==job.map) throw new Error('The character entered an unexpected area.');
@@ -231,33 +251,41 @@
             return;
           }
           if (job.phase==='cooldown') {
-            if (state.map!==job.expectedDestination) throw new Error('The active area changed during the 1-second wait.');
-            job={map:state.map,phase:'waiting',expectedDestination:null,moveStartedAt:0,enterStartedAt:0,checkAt:0,lastRemaining:null};
+            if (state.map!==job.expectedDestination) throw new Error('The active area changed during the arrival wait.');
+            job=freshJob(state);
             if (state.remaining>0 && !state.autoCombat) {
               adapter.enableAutoCombat(state);
-              job.lastRemaining=state.remaining;
-              report('Arrived at '+state.location+'. Auto combat on. '+describe(state));
+              job.lastAutoAttemptAt=clock();lastState={...state,autoCombat:true};
+              say('Arrived at '+state.location+'. Auto combat on. '+describe(state));
               return;
             }
-            report('Arrived at '+state.location+'. Checking the next portal.');
+            if (state.remaining>0) {say('Arrived at '+state.location+'. Auto combat already on. '+describe(state));return;}
+            say('Arrived at '+state.location+'. Checking the next portal.');
           } else if (state.map!==job.map) {
             if (job.phase==='moving' && state.map===job.expectedDestination) {
-              job.phase='cooldown';job.checkAt=clock()+1000;
-              report('Arrived at '+state.location+'. Waiting 1 second before checking again.');
+              job.phase='cooldown';job.checkAt=clock()+settings.arrivalDelayMs;
+              say('Arrived at '+state.location+'. Waiting '+waitText()+' before checking again.');
               return;
             }
             throw new Error('The active map changed unexpectedly.');
           }
           if (state.remaining>0) {
             job.phase='waiting';job.expectedDestination=null;
-            if (state.remaining!==job.lastRemaining) {job.lastRemaining=state.remaining;report(describe(state));}
+            if (state.remaining<job.lastRemaining) job.lastProgressAt=clock();
+            else if (state.remaining>job.lastRemaining) job.lastProgressAt=clock();
+            if (!state.autoCombat && clock()-job.lastAutoAttemptAt>=2000) {
+              adapter.enableAutoCombat(state);job.lastAutoAttemptAt=clock();lastState={...state,autoCombat:true};
+              say('Auto combat was off and has been restored. '+describe(state));
+            } else if (state.remaining!==job.lastRemaining) say(describe(state));
+            job.lastRemaining=state.remaining;
+            if (clock()-job.lastProgressAt>=settings.noProgressMs) throw new Error('The kill count has not changed for '+Math.round(settings.noProgressMs/1000)+' seconds.');
             return;
           }
           if (!state.open) throw new Error('The kill count is complete, but the forward portal is still locked.');
           if (job.phase==='waiting') {
             adapter.moveToNextPortal(state);
             job.phase='moving';job.expectedDestination=state.destination;job.moveStartedAt=clock();job.lastRemaining=0;
-            report('Portal unlocked. Moving to '+state.destinationName+'…');
+            say('Portal unlocked. Moving to '+state.destinationName+'…');
             return;
           }
           if (job.phase==='moving') {
@@ -265,7 +293,7 @@
             if (!state.atPortal) return;
             adapter.enterNextPortal(state);
             job.phase='entering';job.enterStartedAt=clock();
-            report('Entering '+state.destinationName+'…');
+            say('Entering '+state.destinationName+'…');
           }
         } catch(error) { stop('Auto progress stopped: '+error.message); }
       }
@@ -549,40 +577,58 @@
     const root = host.attachShadow({mode:'open'});
     root.innerHTML = `<style>
       *{box-sizing:border-box}button,input,select{font:inherit}button{cursor:pointer;background:#25446b;color:white;border:1px solid #53749a;border-radius:7px;padding:8px}button:disabled{opacity:.45;cursor:default}
-      #panel{width:345px;max-height:85vh;background:#111d2e;color:#eaf2ff;border:1px solid #53749a;border-radius:12px;padding:14px;box-shadow:0 8px 30px #0009}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}h2{font-size:18px;margin:0}input,select{width:100%;background:#0a1422;color:#fff;border:1px solid #4c6482;border-radius:6px;padding:9px;margin-bottom:9px}#rows{overflow:auto;max-height:45vh}.row{display:block;text-align:left;width:100%;margin:5px 0}.row small{display:block;margin-top:4px;color:#bdd0e6}#status{line-height:1.4;margin:10px 0;color:#bdcfe4;font-size:12px}footer{font-size:11px;color:#91a7c0;margin-top:9px}#cancel,#automation-toggle{width:100%}#automation-status{font-size:12px;line-height:1.4;margin:8px 0;color:#bdcfe4}[hidden]{display:none!important}
-      </style><button id="open">IdleOn Toolkit · F8</button><section id="panel" hidden><header><h2>IdleOn Toolkit</h2><button id="close" aria-label="Close">×</button></header><select id="mode" aria-label="Travel or assign activity"><option value="travel">Travel</option><option value="assign">Assign activity and return</option></select><select id="character" aria-label="Character" hidden></select><input id="search" placeholder="Search destinations or codes…" aria-label="Search destinations or codes"><select id="world" aria-label="World"><option value="">All worlds</option>${[1,2,3,4,5,6,7].map(w=>`<option value="${w}">World ${w}</option>`).join('')}</select><div id="assignment-choice" hidden><div id="chosen"></div><select id="resource" aria-label="Resource"></select><button id="start-assignment">Start assignment</button></div><select id="automation" aria-label="Automation"><option value="progress">Auto progress</option><option value="repeat">Repeat gathering</option><option value="chopping">Chopping helper</option></select><button id="automation-toggle" type="button">Start Auto progress</button><div id="automation-status" role="status">Choose an automation. Only one runs at a time.</div><div id="rows"></div><div id="status">Waiting for your character…</div><button id="cancel" hidden>Cancel</button><footer>Only destinations unlocked for the selected character are shown.</footer></section>`;
+      #panel{width:410px;max-height:88vh;overflow:auto;background:#111d2e;color:#eaf2ff;border:1px solid #53749a;border-radius:12px;padding:14px;box-shadow:0 8px 30px #0009}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}h2{font-size:18px;margin:0}h3{font-size:15px;margin:2px 0 5px}.hint{font-size:11px;color:#91a7c0;margin:0 0 10px;line-height:1.4}input,select{width:100%;background:#0a1422;color:#fff;border:1px solid #4c6482;border-radius:6px;padding:9px;margin-bottom:9px}.tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:12px}.tabs button{padding:8px 4px}.page{border-top:1px solid #29435f;padding-top:11px}#rows{overflow:auto;max-height:40vh}.row{display:block;text-align:left;width:100%;margin:5px 0}.row small{display:block;margin-top:4px;color:#bdd0e6}#status,#automation-status{line-height:1.4;margin:10px 0;color:#bdcfe4;font-size:12px}.settings{display:grid;grid-template-columns:1fr 1fr;gap:8px}.settings label{font-size:11px;color:#a9bdd4}.settings input{margin-top:4px}.diagnostics{background:#0a1422;border:1px solid #294968;border-radius:8px;padding:10px;margin:10px 0}.metrics{display:grid;grid-template-columns:1fr 1fr;gap:7px;font-size:12px}.metric{background:#10243a;border-radius:6px;padding:7px}.metric span{display:block;color:#8fa8c2;font-size:10px;margin-bottom:2px}#automation-log{margin:8px 0 0;padding-left:20px;max-height:120px;overflow:auto;color:#aebfd2;font-size:11px;line-height:1.4}footer{font-size:11px;color:#91a7c0;margin-top:9px}#cancel,#automation-toggle,#start-assignment{width:100%}[hidden]{display:none!important}
+      </style><button id="open">IdleOn Toolkit · F8</button><section id="panel" hidden><header><h2>IdleOn Toolkit</h2><button id="close" aria-label="Close">×</button></header><nav class="tabs"><button id="tab-travel">Travel</button><button id="tab-assign">Assignment</button><button id="tab-automation">Automation</button></nav><select id="mode" hidden aria-label="Travel or assign activity"><option value="travel">Travel</option><option value="assign">Assign activity and return</option></select><section id="destination-page" class="page"><h3 id="destination-title">Travel</h3><p id="destination-help" class="hint">Move the active character to an unlocked destination.</p><select id="character" aria-label="Character" hidden></select><input id="search" placeholder="Search destinations or codes…" aria-label="Search destinations or codes"><select id="world" aria-label="World"><option value="">All worlds</option>${[1,2,3,4,5,6,7].map(w=>`<option value="${w}">World ${w}</option>`).join('')}</select><div id="assignment-choice" hidden><div id="chosen"></div><select id="resource" aria-label="Resource"></select><button id="start-assignment">Start assignment</button></div><div id="rows"></div><div id="status">Waiting for your character…</div><button id="cancel" hidden>Cancel</button><footer>Only destinations unlocked for the selected character are shown.</footer></section><section id="automation-page" class="page" hidden><h3>Automation</h3><p class="hint">Run one focused helper at a time. Travel and assignments remain separate.</p><select id="automation" aria-label="Automation"><option value="progress">Auto progress</option><option value="repeat">Repeat gathering</option><option value="chopping">Chopping helper</option></select><div id="progress-tools"><div class="settings"><label>Arrival wait (seconds)<input id="arrival-delay" type="number" min="0.25" max="10" step="0.25"></label><label>No-kill timeout (seconds)<input id="progress-timeout" type="number" min="15" max="900" step="5"></label></div><div class="diagnostics"><div class="metrics"><div class="metric"><span>Phase</span><strong id="diag-phase">Off</strong></div><div class="metric"><span>Auto combat</span><strong id="diag-auto">Unknown</strong></div><div class="metric"><span>Area</span><strong id="diag-area">—</strong></div><div class="metric"><span>Next portal</span><strong id="diag-portal">—</strong></div><div class="metric"><span>Kills remaining</span><strong id="diag-kills">—</strong></div><div class="metric"><span>No progress</span><strong id="diag-stall">—</strong></div></div><ol id="automation-log"></ol></div></div><button id="automation-toggle" type="button">Start Auto progress</button><div id="automation-status" role="status">Choose an automation. Only one runs at a time.</div></section></section>`;
     const el = id => root.getElementById(id);
     const status = message => { el('status').textContent = message; };
-    let taskMessage = '', selectedRow = null, displayedOwner = '';
+    let taskMessage = '', selectedRow = null, displayedOwner = '', workspace='travel';
     const adapter=gameAdapter(message => { taskMessage=message; status(message); });
     const assignment = createAssignment(adapter);
-    const automationReport=message=>{el('automation-status').textContent=message;updateAutomationControls();if(!el('panel').hidden)render();};
+    const automationEvents=[];
+    const renderAutomationLog=()=>{el('automation-log').replaceChildren();automationEvents.slice(-8).reverse().forEach(event=>{const item=document.createElement('li');item.textContent=event;el('automation-log').appendChild(item);});};
+    const automationReport=message=>{automationEvents.push(new Date().toLocaleTimeString()+' · '+message);el('automation-status').textContent=message;renderAutomationLog();updateAutomationControls();updateProgressDiagnostics();if(!el('panel').hidden && workspace!=='automation')render();};
     const repeat=createRepeatGathering(adapter,automationReport);
     const chopping=createChoppingMinigame(adapter,automationReport);
     const progress=createAutoProgress(adapter,automationReport);
     const automations={progress:{label:'Auto progress',controller:progress},repeat:{label:'Repeat gathering',controller:repeat},chopping:{label:'Chopping helper',controller:chopping}};
     const activeAutomation=()=>Object.values(automations).find(item=>item.controller.active);
+    const phaseNames={off:'Off',waiting:'Fighting',moving:'Approaching portal',entering:'Entering area',cooldown:'Arrival wait'};
+    function updateProgressDiagnostics() {
+      const info=progress.diagnostics;
+      el('diag-phase').textContent=phaseNames[info.phase] || info.phase;
+      el('diag-auto').textContent=info.autoCombat===true?'ON':info.autoCombat===false?'OFF':'Unknown';
+      el('diag-area').textContent=info.location || '—';
+      el('diag-portal').textContent=info.destinationName || '—';
+      el('diag-kills').textContent=info.remaining??'—';
+      el('diag-stall').textContent=info.active && info.remaining>0 ? Math.floor(info.noProgressFor/1000)+'s / '+Math.round(info.noProgressLimit/1000)+'s' : '—';
+    }
     function updateAutomationControls() {
       const active=activeAutomation(), selected=automations[el('automation').value] || automations.progress;
       el('automation').disabled=!!active || !!pending || !!assignment.current;
       el('automation-toggle').disabled=!!pending || !!assignment.current;
       el('automation-toggle').textContent=(active?'Stop ':'Start ')+(active?.label || selected.label);
+      el('progress-tools').hidden=(active?.controller || selected.controller)!==progress;
+      el('arrival-delay').disabled=!!active;el('progress-timeout').disabled=!!active;
+      updateProgressDiagnostics();
     }
     window.__romNavigation.repeatGathering=repeat;
     window.__romNavigation.choppingMinigame=chopping;
     window.__romNavigation.autoProgress=progress;
+    el('arrival-delay').value='1';el('progress-timeout').value='120';
+    const configureProgress=()=>progress.configure({arrivalDelayMs:Number(el('arrival-delay').value)*1000,noProgressMs:Number(el('progress-timeout').value)*1000});
+    el('arrival-delay').onchange=configureProgress;el('progress-timeout').onchange=configureProgress;
     el('automation').onchange=updateAutomationControls;
     el('automation-toggle').onclick=()=>{
       const active=activeAutomation();
       if (active) active.controller.stop();
       else if (!pending && !assignment.current) {
         const selected=automations[el('automation').value] || automations.progress;
-        try {selected.controller.start();} catch(error) {el('automation-status').textContent=error.message;}
+        try {if(selected.controller===progress)configureProgress();selected.controller.start();} catch(error) {automationReport(error.message);}
       }
       updateAutomationControls();render();
     };
     setInterval(()=>repeat.tick(),50);
-    setInterval(()=>progress.tick(),250);
+    setInterval(()=>{progress.tick();if(workspace==='automation')updateProgressDiagnostics();},250);
     if (typeof requestAnimationFrame==='function') {
       const choppingFrame=()=>{chopping.tick();requestAnimationFrame(choppingFrame);};
       requestAnimationFrame(choppingFrame);
@@ -604,10 +650,21 @@
       el('assignment-choice').hidden=false;
       status('Choose the character and resource, then start the assignment.');
     }
-    el('mode').onchange=()=>{
-      el('character').hidden=el('mode').value!=='assign';
-      el('assignment-choice').hidden=true; selectedRow=null; render();
-    };
+    function setWorkspace(next) {
+      workspace=['travel','assign','automation'].includes(next)?next:'travel';
+      el('destination-page').hidden=workspace==='automation';el('automation-page').hidden=workspace!=='automation';
+      for (const name of ['travel','assign','automation']) el('tab-'+name).style.background=name===workspace?'#3b6594':'#1a304c';
+      if (workspace!=='automation') {
+        el('mode').value=workspace;el('character').hidden=workspace!=='assign';
+        el('destination-title').textContent=workspace==='assign'?'Assign activity and return':'Travel';
+        el('destination-help').textContent=workspace==='assign'?'Send a selected character to a gathering resource, verify it starts, then return.':'Move the active character to an unlocked destination.';
+        el('assignment-choice').hidden=true;selectedRow=null;render();
+      } else {updateAutomationControls();renderAutomationLog();}
+    }
+    el('mode').onchange=()=>setWorkspace(el('mode').value);
+    el('tab-travel').onclick=()=>setWorkspace('travel');
+    el('tab-assign').onclick=()=>setWorkspace('assign');
+    el('tab-automation').onclick=()=>setWorkspace('automation');
     el('character').onchange=()=>{selectedRow=null;el('assignment-choice').hidden=true;render();};
     el('start-assignment').onclick=()=>{
       if (!selectedRow || pending || assignment.current) return;
@@ -618,7 +675,7 @@
         el('assignment-choice').hidden=true; render(); status(taskMessage);
       } catch(error) { status(error.message); }
     };
-    const toggle = () => { el('panel').hidden = !el('panel').hidden; el('open').hidden = !el('panel').hidden; if (!el('panel').hidden) { render(); el('search').focus(); } };
+    const toggle = () => { el('panel').hidden = !el('panel').hidden; el('open').hidden = !el('panel').hidden; if (!el('panel').hidden) { if(workspace==='automation')updateAutomationControls();else{render();el('search').focus();} } };
     el('open').onclick = toggle; el('close').onclick = toggle;
     window.addEventListener('keydown', event => { if(event.code === 'F8'){event.preventDefault();event.stopImmediatePropagation();toggle();}}, true);
     ['pointerdown','pointerup','mousedown','mouseup','click','dblclick','wheel','keydown','keyup'].forEach(type => host.addEventListener(type, event=>event.stopPropagation()));
@@ -714,6 +771,7 @@
     }
     el('cancel').onclick=()=>{if(assignment.current){assignment.cancel();render();status(taskMessage);}else{pending=null;render();status('Pending request canceled. A transition already started will finish.');}};
     el('search').oninput=render;el('world').onchange=render;
+    setWorkspace('travel');
     let previousReady = false;
     setInterval(()=>{
       try {
